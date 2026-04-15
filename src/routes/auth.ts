@@ -61,18 +61,15 @@ auth.post('/login', async (c) => {
   // Check if user exists
   const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
 
-  // In production: send SMS here
-  // For dev: log the code
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`[OTP] ${phone}: ${code}`);
-  }
+  // TODO: integrate SMS provider (SMS.ru / SMS Aero)
+  // Until then, return code in response for testing
+  console.log(`[OTP] ${phone}: ${code}`);
 
   return c.json({
     data: {
       otpSent: true,
       isNewUser: existing.length === 0,
-      // Dev only — remove in production
-      ...(process.env.NODE_ENV !== 'production' && { devCode: code }),
+      devCode: code, // TODO: remove after SMS integration
     },
   });
 });
