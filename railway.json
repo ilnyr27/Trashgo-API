@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "node --import tsx src/index.ts",
+    "startCommand": "node --import tsx src/db/migrate.ts && node --import tsx src/index.ts",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
