@@ -13,11 +13,15 @@ const app = new Hono();
 // Global middleware
 app.use('*', logger());
 app.use('*', timing());
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173']),
+  'https://trashgo-coral.vercel.app',
+  'https://trashgo-gamma.vercel.app',
+  'https://web-production-8d2c4.up.railway.app',
+];
+
 app.use('*', cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'https://trashgo-coral.vercel.app',
-  ],
+  origin: allowedOrigins,
   allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
