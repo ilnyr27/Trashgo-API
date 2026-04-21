@@ -52,24 +52,21 @@ auth.post('/login', async (c) => {
 
   const { phone } = parsed.data;
 
-  // Generate 4-digit OTP
-  const code = String(Math.floor(1000 + Math.random() * 9000));
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+  // Fixed code 1111 until SMS provider is integrated
+  const code = '1111';
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   await db.insert(otpCodes).values({ phone, code, expiresAt });
 
   // Check if user exists
   const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
 
-  // TODO: integrate SMS provider (SMS.ru / SMS Aero)
-  // Until then, return code in response for testing
   console.log(`[OTP] ${phone}: ${code}`);
 
   return c.json({
     data: {
       otpSent: true,
       isNewUser: existing.length === 0,
-      devCode: code, // TODO: remove after SMS integration
     },
   });
 });
