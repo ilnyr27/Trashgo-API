@@ -67,6 +67,7 @@ auth.post('/login', async (c) => {
     data: {
       otpSent: true,
       isNewUser: existing.length === 0,
+      devCode: code,
     },
   });
 });
