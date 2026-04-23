@@ -17,6 +17,7 @@ const loginSchema = z.object({
 const verifySchema = z.object({
   phone: z.string().min(10).max(20),
   code: z.string().length(4),
+  role: z.enum(['customer', 'contractor']).optional(),
 });
 
 const registerSchema = z.object({
@@ -80,7 +81,7 @@ auth.post('/verify', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
   }
 
-  const { phone, code } = parsed.data;
+  const { phone, code, role } = parsed.data;
 
   // Find valid OTP
   const otp = await db.select()
@@ -101,20 +102,28 @@ auth.post('/verify', async (c) => {
   await db.update(otpCodes).set({ used: 1 }).where(eq(otpCodes.id, otp[0].id));
 
   // Find user
-  const user = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
-  if (user.length === 0) {
+  const userRows = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  if (userRows.length === 0) {
     return c.json({
       data: { verified: true, isNewUser: true },
     });
   }
 
+  let userRow = userRows[0];
+
+  // Update role if the user is switching roles
+  if (role && role !== userRow.role) {
+    await db.update(users).set({ role }).where(eq(users.id, userRow.id));
+    userRow = { ...userRow, role };
+  }
+
   // Generate tokens
-  const tokens = generateTokens(user[0].id, user[0].role);
+  const tokens = generateTokens(userRow.id, userRow.role);
 
   // Store refresh token
   const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   await db.insert(refreshTokens).values({
-    userId: user[0].id,
+    userId: userRow.id,
     token: tokens.refreshToken,
     expiresAt: refreshExpires,
   });
@@ -122,14 +131,14 @@ auth.post('/verify', async (c) => {
   return c.json({
     data: {
       user: {
-        id: user[0].id,
-        phone: user[0].phone,
-        name: user[0].name,
-        role: user[0].role,
-        district: user[0].district,
-        xp: user[0].xp,
-        level: user[0].level,
-        createdAt: user[0].createdAt.toISOString(),
+        id: userRow.id,
+        phone: userRow.phone,
+        name: userRow.name,
+        role: userRow.role,
+        district: userRow.district,
+        xp: userRow.xp,
+        level: userRow.level,
+        createdAt: userRow.createdAt.toISOString(),
       },
       token: tokens.token,
       refreshToken: tokens.refreshToken,
