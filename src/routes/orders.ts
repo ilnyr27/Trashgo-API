@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, and, desc, ne } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { orders, orderHistory } from '../db/schema.js';
-import { authMiddleware, requireRole, type JwtPayload } from '../middleware/auth.js';
+import { orders, orderHistory, users } from '../db/schema.js';
+import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -18,6 +18,7 @@ const createOrderSchema = z.object({
   price: z.number().int().min(10).max(10000),
   description: z.string().max(1000).default(''),
   scheduledAt: z.string().datetime(),
+  photoUrls: z.array(z.string()).max(5).default([]),
 });
 
 const updateStatusSchema = z.object({
@@ -25,10 +26,14 @@ const updateStatusSchema = z.object({
 });
 
 // GET /orders — list my orders
+// ?mode=contractor → orders I accepted (contractorId = me)
+// default → orders I created (customerId = me)
 ordersRouter.get('/', async (c) => {
   const user = c.get('user');
+  const mode = c.req.query('mode');
 
-  const field = user.role === 'customer' ? orders.customerId : orders.contractorId;
+  const field = mode === 'contractor' ? orders.contractorId : orders.customerId;
+
   const result = await db.select()
     .from(orders)
     .where(eq(field, user.userId))
@@ -41,19 +46,16 @@ ordersRouter.get('/', async (c) => {
   });
 });
 
-// GET /orders/available — for contractors
-ordersRouter.get('/available', requireRole('contractor'), async (c) => {
+// GET /orders/available — all open orders (any authenticated user can browse)
+ordersRouter.get('/available', async (c) => {
   const district = c.req.query('district');
 
-  let query = db.select()
+  const result = await db.select()
     .from(orders)
     .where(eq(orders.status, 'new'))
     .orderBy(desc(orders.createdAt))
     .limit(50);
 
-  const result = await query;
-
-  // Filter by district if provided
   const filtered = district
     ? result.filter((o) => o.district === district)
     : result;
@@ -67,17 +69,22 @@ ordersRouter.get('/available', requireRole('contractor'), async (c) => {
 // GET /orders/:id
 ordersRouter.get('/:id', async (c) => {
   const id = c.req.param('id');
-  const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  const result = await db
+    .select({ order: orders, customerName: users.name })
+    .from(orders)
+    .leftJoin(users, eq(orders.customerId, users.id))
+    .where(eq(orders.id, id))
+    .limit(1);
 
   if (result.length === 0) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
   }
 
-  return c.json({ data: formatOrder(result[0]) });
+  return c.json({ data: { ...formatOrder(result[0].order), customerName: result[0].customerName ?? '' } });
 });
 
-// POST /orders — create order (customer only)
-ordersRouter.post('/', requireRole('customer'), async (c) => {
+// POST /orders — create an order (any authenticated user)
+ordersRouter.post('/', async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
   const parsed = createOrderSchema.safeParse(body);
@@ -93,10 +100,10 @@ ordersRouter.post('/', requireRole('customer'), async (c) => {
     volume: parsed.data.volume,
     price: parsed.data.price,
     description: parsed.data.description,
+    photoUrls: JSON.stringify(parsed.data.photoUrls),
     scheduledAt: new Date(parsed.data.scheduledAt),
   }).returning();
 
-  // Log history
   await db.insert(orderHistory).values({
     orderId: newOrder[0].id,
     status: 'new',
@@ -106,7 +113,7 @@ ordersRouter.post('/', requireRole('customer'), async (c) => {
   return c.json({ data: formatOrder(newOrder[0]) }, 201);
 });
 
-// PATCH /orders/:id/status — update order status
+// PATCH /orders/:id/status — update order status (any authenticated user)
 ordersRouter.patch('/:id/status', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -119,7 +126,6 @@ ordersRouter.patch('/:id/status', async (c) => {
 
   const { status } = parsed.data;
 
-  // Get current order
   const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
   if (current.length === 0) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
@@ -127,7 +133,7 @@ ordersRouter.patch('/:id/status', async (c) => {
 
   const order = current[0];
 
-  // Validate transitions
+  // Validate state machine
   const validTransitions: Record<string, string[]> = {
     new: ['accepted', 'cancelled'],
     accepted: ['in_progress', 'cancelled'],
@@ -141,15 +147,6 @@ ordersRouter.patch('/:id/status', async (c) => {
     }, 400);
   }
 
-  // Role-based permission
-  if (status === 'accepted' && user.role !== 'contractor') {
-    return c.json({ error: { code: 'FORBIDDEN', message: 'Only contractors can accept' } }, 403);
-  }
-  if (status === 'completed' && user.role !== 'contractor') {
-    return c.json({ error: { code: 'FORBIDDEN', message: 'Only contractors can complete' } }, 403);
-  }
-
-  // Update
   const updates: Record<string, unknown> = {
     status,
     updatedAt: new Date(),
@@ -163,11 +160,10 @@ ordersRouter.patch('/:id/status', async (c) => {
     .where(eq(orders.id, id))
     .returning();
 
-  // Log history
   await db.insert(orderHistory).values({
     orderId: id,
     status,
-    note: `Status changed by ${user.role}`,
+    note: `Status changed by user ${user.userId}`,
   });
 
   return c.json({ data: formatOrder(updated[0]) });
@@ -175,6 +171,8 @@ ordersRouter.patch('/:id/status', async (c) => {
 
 // Helper
 function formatOrder(o: typeof orders.$inferSelect) {
+  let photoUrls: string[] = [];
+  try { photoUrls = JSON.parse(o.photoUrls || '[]'); } catch {}
   return {
     id: o.id,
     customerId: o.customerId,
@@ -185,6 +183,7 @@ function formatOrder(o: typeof orders.$inferSelect) {
     volume: o.volume,
     price: o.price,
     description: o.description,
+    photoUrls,
     scheduledAt: o.scheduledAt.toISOString(),
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
