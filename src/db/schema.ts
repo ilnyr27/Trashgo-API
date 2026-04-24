@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, integer, boolean, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
 
 // Enums
 export const userRoleEnum = pgEnum('user_role', ['customer', 'contractor']);
@@ -40,7 +40,9 @@ export const orders = pgTable('orders', {
   volume: integer('volume').notNull(),
   price: integer('price').notNull(),
   description: text('description').notNull().default(''),
-  scheduledAt: timestamp('scheduled_at').notNull(),
+  photoUrls: text('photo_urls').notNull().default('[]'),
+  scheduledAt: timestamp('scheduled_at'),
+  asap: boolean('asap').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => [

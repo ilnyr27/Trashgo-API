@@ -7,6 +7,8 @@ import { timing } from 'hono/timing';
 import authRoutes from './routes/auth.js';
 import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
+import { db } from './db/index.js';
+import { sql } from 'drizzle-orm';
 
 const app = new Hono();
 
@@ -55,6 +57,20 @@ app.onError((err, c) => {
     },
   }, 500);
 });
+
+// Run pending schema migrations
+async function runMigrations() {
+  try {
+    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_urls TEXT NOT NULL DEFAULT '[]'`);
+    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS asap BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE orders ALTER COLUMN scheduled_at DROP NOT NULL`);
+    console.log('✓ DB schema up to date');
+  } catch (e: any) {
+    console.warn('Migration warning:', e.message);
+  }
+}
+
+await runMigrations();
 
 // Start server
 const port = parseInt(process.env.PORT || '3000');

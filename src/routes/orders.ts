@@ -17,7 +17,8 @@ const createOrderSchema = z.object({
   volume: z.number().int().min(1).max(50),
   price: z.number().int().min(10).max(10000),
   description: z.string().max(1000).default(''),
-  scheduledAt: z.string().datetime(),
+  scheduledAt: z.string().datetime().optional(),
+  asap: z.boolean().default(false),
   photoUrls: z.array(z.string()).max(5).default([]),
 });
 
@@ -101,7 +102,8 @@ ordersRouter.post('/', async (c) => {
     price: parsed.data.price,
     description: parsed.data.description,
     photoUrls: JSON.stringify(parsed.data.photoUrls),
-    scheduledAt: new Date(parsed.data.scheduledAt),
+    asap: parsed.data.asap,
+    scheduledAt: parsed.data.asap ? null : new Date(parsed.data.scheduledAt!),
   }).returning();
 
   await db.insert(orderHistory).values({
@@ -184,7 +186,8 @@ function formatOrder(o: typeof orders.$inferSelect) {
     price: o.price,
     description: o.description,
     photoUrls,
-    scheduledAt: o.scheduledAt.toISOString(),
+    asap: o.asap ?? false,
+    scheduledAt: o.scheduledAt ? o.scheduledAt.toISOString() : null,
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
   };
