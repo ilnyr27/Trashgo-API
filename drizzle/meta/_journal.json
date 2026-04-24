@@ -8,6 +8,13 @@
       "when": 1776242994702,
       "tag": "0000_magenta_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1745241600000,
+      "tag": "0001_add_photo_urls",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@ import { pgTable, uuid, varchar, text, integer, boolean, timestamp, pgEnum, inde
 // Enums
 export const userRoleEnum = pgEnum('user_role', ['customer', 'contractor']);
 export const orderStatusEnum = pgEnum('order_status', [
-  'new', 'accepted', 'in_progress', 'completed', 'cancelled',
+  'new', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'cancelled',
 ]);
 
 // Users
@@ -15,6 +15,7 @@ export const users = pgTable('users', {
   district: varchar('district', { length: 100 }).notNull().default(''),
   xp: integer('xp').notNull().default(0),
   level: integer('level').notNull().default(1),
+  balance: integer('balance').notNull().default(0),
   passwordHash: varchar('password_hash', { length: 255 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
@@ -41,6 +42,7 @@ export const orders = pgTable('orders', {
   price: integer('price').notNull(),
   description: text('description').notNull().default(''),
   photoUrls: text('photo_urls').notNull().default('[]'),
+  completionPhotoUrls: text('completion_photo_urls').notNull().default('[]'),
   scheduledAt: timestamp('scheduled_at'),
   asap: boolean('asap').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),

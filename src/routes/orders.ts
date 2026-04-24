@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
@@ -23,7 +23,11 @@ const createOrderSchema = z.object({
 });
 
 const updateStatusSchema = z.object({
-  status: z.enum(['accepted', 'in_progress', 'completed', 'cancelled']),
+  status: z.enum(['accepted', 'in_progress', 'completed', 'cancelled', 'pending_confirmation']),
+});
+
+const completeOrderSchema = z.object({
+  completionPhotoUrls: z.array(z.string()).max(5).default([]),
 });
 
 // GET /orders — list my orders
@@ -139,7 +143,8 @@ ordersRouter.patch('/:id/status', async (c) => {
   const validTransitions: Record<string, string[]> = {
     new: ['accepted', 'cancelled'],
     accepted: ['in_progress', 'cancelled'],
-    in_progress: ['completed', 'cancelled'],
+    in_progress: ['pending_confirmation', 'cancelled'],
+    pending_confirmation: ['completed', 'cancelled'],
   };
 
   const allowed = validTransitions[order.status] || [];
@@ -171,10 +176,92 @@ ordersRouter.patch('/:id/status', async (c) => {
   return c.json({ data: formatOrder(updated[0]) });
 });
 
+// POST /orders/:id/complete — contractor uploads completion photo, moves to pending_confirmation
+ordersRouter.post('/:id/complete', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const parsed = completeOrderSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
+  }
+
+  const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (current.length === 0) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  }
+
+  const order = current[0];
+  if (order.contractorId !== user.userId) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  }
+  if (order.status !== 'in_progress') {
+    return c.json({ error: { code: 'INVALID_TRANSITION', message: 'Order must be in_progress' } }, 400);
+  }
+
+  const updated = await db.update(orders)
+    .set({
+      status: 'pending_confirmation',
+      completionPhotoUrls: JSON.stringify(parsed.data.completionPhotoUrls),
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, id))
+    .returning();
+
+  await db.insert(orderHistory).values({
+    orderId: id,
+    status: 'pending_confirmation',
+    note: `Contractor ${user.userId} submitted completion photos`,
+  });
+
+  return c.json({ data: formatOrder(updated[0]) });
+});
+
+// POST /orders/:id/confirm — customer confirms completion, credits contractor balance
+ordersRouter.post('/:id/confirm', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (current.length === 0) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  }
+
+  const order = current[0];
+  if (order.customerId !== user.userId) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  }
+  if (order.status !== 'pending_confirmation') {
+    return c.json({ error: { code: 'INVALID_TRANSITION', message: 'Order must be pending_confirmation' } }, 400);
+  }
+
+  const updated = await db.update(orders)
+    .set({ status: 'completed', updatedAt: new Date() })
+    .where(eq(orders.id, id))
+    .returning();
+
+  if (order.contractorId) {
+    await db.update(users)
+      .set({ balance: sql`balance + ${order.price}` })
+      .where(eq(users.id, order.contractorId));
+  }
+
+  await db.insert(orderHistory).values({
+    orderId: id,
+    status: 'completed',
+    note: `Confirmed by customer ${user.userId}`,
+  });
+
+  return c.json({ data: formatOrder(updated[0]) });
+});
+
 // Helper
 function formatOrder(o: typeof orders.$inferSelect) {
   let photoUrls: string[] = [];
+  let completionPhotoUrls: string[] = [];
   try { photoUrls = JSON.parse(o.photoUrls || '[]'); } catch {}
+  try { completionPhotoUrls = JSON.parse(o.completionPhotoUrls || '[]'); } catch {}
   return {
     id: o.id,
     customerId: o.customerId,
@@ -186,6 +273,7 @@ function formatOrder(o: typeof orders.$inferSelect) {
     price: o.price,
     description: o.description,
     photoUrls,
+    completionPhotoUrls,
     asap: o.asap ?? false,
     scheduledAt: o.scheduledAt ? o.scheduledAt.toISOString() : null,
     createdAt: o.createdAt.toISOString(),
