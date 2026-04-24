@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, sql, asc } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { orders, orderHistory, users } from '../db/schema.js';
+import { orders, orderHistory, users, messages } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
@@ -75,7 +75,7 @@ ordersRouter.get('/available', async (c) => {
 ordersRouter.get('/:id', async (c) => {
   const id = c.req.param('id');
   const result = await db
-    .select({ order: orders, customerName: users.name })
+    .select({ order: orders, customerName: users.name, customerPhone: users.phone })
     .from(orders)
     .leftJoin(users, eq(orders.customerId, users.id))
     .where(eq(orders.id, id))
@@ -85,7 +85,74 @@ ordersRouter.get('/:id', async (c) => {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
   }
 
-  return c.json({ data: { ...formatOrder(result[0].order), customerName: result[0].customerName ?? '' } });
+  const row = result[0];
+  let contractorPhone = '';
+  let contractorName = '';
+  if (row.order.contractorId) {
+    const contractor = await db.select({ name: users.name, phone: users.phone })
+      .from(users).where(eq(users.id, row.order.contractorId)).limit(1);
+    contractorPhone = contractor[0]?.phone ?? '';
+    contractorName = contractor[0]?.name ?? '';
+  }
+
+  return c.json({ data: {
+    ...formatOrder(row.order),
+    customerName: row.customerName ?? '',
+    customerPhone: row.customerPhone ?? '',
+    contractorPhone,
+    contractorName,
+  } });
+});
+
+// GET /orders/:id/messages
+ordersRouter.get('/:id/messages', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const order = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (!order.length) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  const o = order[0];
+  if (o.customerId !== user.userId && o.contractorId !== user.userId) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  }
+
+  const msgs = await db.select().from(messages)
+    .where(eq(messages.orderId, id))
+    .orderBy(asc(messages.createdAt))
+    .limit(200);
+
+  return c.json({ data: msgs.map(m => ({
+    id: m.id,
+    senderId: m.senderId,
+    senderName: m.senderName,
+    text: m.text,
+    createdAt: m.createdAt.toISOString(),
+  })) });
+});
+
+// POST /orders/:id/messages
+ordersRouter.post('/:id/messages', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const text = (body?.text ?? '').toString().trim().slice(0, 1000);
+  if (!text) return c.json({ error: { code: 'VALIDATION', message: 'Text required' } }, 400);
+
+  const order = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (!order.length) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  const o = order[0];
+  if (o.customerId !== user.userId && o.contractorId !== user.userId) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  }
+
+  const sender = await db.select({ name: users.name }).from(users).where(eq(users.id, user.userId)).limit(1);
+  const senderName = sender[0]?.name ?? '';
+
+  const msg = await db.insert(messages).values({ orderId: id, senderId: user.userId, senderName, text }).returning();
+  return c.json({ data: {
+    id: msg[0].id, senderId: msg[0].senderId, senderName: msg[0].senderName,
+    text: msg[0].text, createdAt: msg[0].createdAt.toISOString(),
+  } }, 201);
 });
 
 // POST /orders — create an order (any authenticated user)

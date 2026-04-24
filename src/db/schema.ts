@@ -62,6 +62,18 @@ export const orderHistory = pgTable('order_history', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Chat messages
+export const messages = pgTable('messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orderId: uuid('order_id').notNull().references(() => orders.id),
+  senderId: uuid('sender_id').notNull().references(() => users.id),
+  senderName: varchar('sender_name', { length: 100 }).notNull().default(''),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('idx_messages_order').on(table.orderId, table.createdAt),
+]);
+
 // Refresh tokens
 export const refreshTokens = pgTable('refresh_tokens', {
   id: uuid('id').primaryKey().defaultRandom(),
