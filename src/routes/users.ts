@@ -33,6 +33,7 @@ usersRouter.get('/me', async (c) => {
       district: u.district,
       xp: u.xp,
       level: u.level,
+      balance: u.balance,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -67,6 +68,7 @@ usersRouter.patch('/me', async (c) => {
       district: u.district,
       xp: u.xp,
       level: u.level,
+      balance: u.balance,
       createdAt: u.createdAt.toISOString(),
     },
   });
