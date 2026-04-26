@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc, sql, asc } from 'drizzle-orm';
+import { eq, desc, sql, asc, and, ne } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
@@ -51,13 +51,14 @@ ordersRouter.get('/', async (c) => {
   });
 });
 
-// GET /orders/available — all open orders (any authenticated user can browse)
+// GET /orders/available — all open orders except ones created by the current user
 ordersRouter.get('/available', async (c) => {
+  const user = c.get('user');
   const district = c.req.query('district');
 
   const result = await db.select()
     .from(orders)
-    .where(eq(orders.status, 'new'))
+    .where(and(eq(orders.status, 'new'), ne(orders.customerId, user.userId)))
     .orderBy(desc(orders.createdAt))
     .limit(50);
 
