@@ -324,6 +324,50 @@ ordersRouter.post('/:id/confirm', async (c) => {
   return c.json({ data: formatOrder(updated[0]) });
 });
 
+// POST /orders/:id/rate — leave a rating for the other party
+ordersRouter.post('/:id/rate', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const rating = Number(body?.rating);
+  if (!rating || rating < 1 || rating > 5) {
+    return c.json({ error: { code: 'VALIDATION', message: 'Rating must be 1-5' } }, 400);
+  }
+
+  const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (current.length === 0) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  }
+  const order = current[0];
+  if (order.status !== 'completed') {
+    return c.json({ error: { code: 'INVALID', message: 'Order must be completed' } }, 400);
+  }
+
+  if (order.customerId === user.userId) {
+    // Customer rates contractor
+    if ((order as any).ratingByCustomer) {
+      return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
+    }
+    await db.execute(sql`UPDATE orders SET rating_by_customer = ${rating} WHERE id = ${id}`);
+    if (order.contractorId) {
+      await db.execute(sql`
+        UPDATE users SET xp = xp + ${rating}
+        WHERE id = ${order.contractorId}
+      `);
+    }
+  } else if (order.contractorId === user.userId) {
+    // Contractor rates customer
+    if ((order as any).ratingByContractor) {
+      return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
+    }
+    await db.execute(sql`UPDATE orders SET rating_by_contractor = ${rating} WHERE id = ${id}`);
+  } else {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  }
+
+  return c.json({ data: { ok: true } });
+});
+
 // Helper
 function formatOrder(o: typeof orders.$inferSelect) {
   let photoUrls: string[] = [];
@@ -346,6 +390,8 @@ function formatOrder(o: typeof orders.$inferSelect) {
     scheduledAt: o.scheduledAt ? o.scheduledAt.toISOString() : null,
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
+    ratingByCustomer: (o as any).ratingByCustomer ?? null,
+    ratingByContractor: (o as any).ratingByContractor ?? null,
   };
 }
 
