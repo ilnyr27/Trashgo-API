@@ -357,10 +357,10 @@ ordersRouter.post('/:id/rate', async (c) => {
 
   if (order.customerId === user.userId) {
     // Customer rates contractor
-    if ((order as any).ratingByCustomer) {
+    if (order.ratingByCustomer) {
       return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
     }
-    await db.execute(sql`UPDATE orders SET rating_by_customer = ${rating} WHERE id = ${id}`);
+    await db.update(orders).set({ ratingByCustomer: rating }).where(eq(orders.id, id));
     if (order.contractorId) {
       const contractor = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.contractorId)).limit(1);
       const newXp = (contractor[0]?.xp ?? 0) + rating;
@@ -369,10 +369,10 @@ ordersRouter.post('/:id/rate', async (c) => {
     }
   } else if (order.contractorId === user.userId) {
     // Contractor rates customer
-    if ((order as any).ratingByContractor) {
+    if (order.ratingByContractor) {
       return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
     }
-    await db.execute(sql`UPDATE orders SET rating_by_contractor = ${rating} WHERE id = ${id}`);
+    await db.update(orders).set({ ratingByContractor: rating }).where(eq(orders.id, id));
   } else {
     return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
   }
@@ -402,8 +402,8 @@ function formatOrder(o: typeof orders.$inferSelect) {
     scheduledAt: o.scheduledAt ? o.scheduledAt.toISOString() : null,
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
-    ratingByCustomer: (o as any).ratingByCustomer ?? null,
-    ratingByContractor: (o as any).ratingByContractor ?? null,
+    ratingByCustomer: o.ratingByCustomer ?? null,
+    ratingByContractor: o.ratingByContractor ?? null,
   };
 }
 

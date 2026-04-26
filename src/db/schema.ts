@@ -46,6 +46,8 @@ export const orders = pgTable('orders', {
   completionPhotoUrls: text('completion_photo_urls').notNull().default('[]'),
   scheduledAt: timestamp('scheduled_at'),
   asap: boolean('asap').notNull().default(false),
+  ratingByCustomer: integer('rating_by_customer'),
+  ratingByContractor: integer('rating_by_contractor'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => [
