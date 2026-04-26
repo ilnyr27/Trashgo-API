@@ -9,9 +9,12 @@ const usersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
 usersRouter.use('*', authMiddleware);
 
+const TRANSPORT_MODES = ['pedestrian', 'scooter', 'bicycle', 'e-bicycle', 'moto', 'car'] as const;
+
 const updateProfileSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   district: z.string().min(1).max(100).optional(),
+  transportMode: z.enum(TRANSPORT_MODES).optional(),
 });
 
 // GET /users/me
@@ -31,6 +34,7 @@ usersRouter.get('/me', async (c) => {
       name: u.name,
       role: u.role,
       district: u.district,
+      transportMode: u.transportMode,
       xp: u.xp,
       level: u.level,
       balance: u.balance,
@@ -66,6 +70,7 @@ usersRouter.patch('/me', async (c) => {
       name: u.name,
       role: u.role,
       district: u.district,
+      transportMode: u.transportMode,
       xp: u.xp,
       level: u.level,
       balance: u.balance,

@@ -7,6 +7,15 @@ import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
+// XP level thresholds (minimum total XP to reach each level)
+const XP_THRESHOLDS = [0, 100, 200, 400, 700, 1000];
+function calcLevel(xp: number): number {
+  for (let i = XP_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (xp >= XP_THRESHOLDS[i]) return i + 1;
+  }
+  return 1;
+}
+
 // All routes require auth
 ordersRouter.use('*', authMiddleware);
 
@@ -310,8 +319,11 @@ ordersRouter.post('/:id/confirm', async (c) => {
     .returning();
 
   if (order.contractorId) {
+    const contractor = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.contractorId)).limit(1);
+    const newXp = (contractor[0]?.xp ?? 0) + 10;
+    const newLevel = calcLevel(newXp);
     await db.update(users)
-      .set({ balance: sql`balance + ${order.price}` })
+      .set({ balance: sql`balance + ${order.price}`, xp: newXp, level: newLevel })
       .where(eq(users.id, order.contractorId));
   }
 
@@ -350,10 +362,10 @@ ordersRouter.post('/:id/rate', async (c) => {
     }
     await db.execute(sql`UPDATE orders SET rating_by_customer = ${rating} WHERE id = ${id}`);
     if (order.contractorId) {
-      await db.execute(sql`
-        UPDATE users SET xp = xp + ${rating}
-        WHERE id = ${order.contractorId}
-      `);
+      const contractor = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.contractorId)).limit(1);
+      const newXp = (contractor[0]?.xp ?? 0) + rating;
+      const newLevel = calcLevel(newXp);
+      await db.update(users).set({ xp: newXp, level: newLevel }).where(eq(users.id, order.contractorId));
     }
   } else if (order.contractorId === user.userId) {
     // Contractor rates customer

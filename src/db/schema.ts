@@ -13,6 +13,7 @@ export const users = pgTable('users', {
   name: varchar('name', { length: 100 }).notNull().default(''),
   role: userRoleEnum('role').notNull(),
   district: varchar('district', { length: 100 }).notNull().default(''),
+  transportMode: varchar('transport_mode', { length: 50 }).notNull().default('car'),
   xp: integer('xp').notNull().default(0),
   level: integer('level').notNull().default(1),
   balance: integer('balance').notNull().default(0),
