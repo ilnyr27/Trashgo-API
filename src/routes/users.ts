@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNotNull, avg, count } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { users, orders } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 
 const usersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
@@ -27,6 +27,21 @@ usersRouter.get('/me', async (c) => {
   }
 
   const u = result[0];
+
+  // Compute avg rating: contractors receive ratingByCustomer, customers receive ratingByContractor
+  const isContractor = u.role === 'contractor';
+  const ratingData = await db.select({
+    avgRating: avg(isContractor ? orders.ratingByCustomer : orders.ratingByContractor),
+    ratingCount: count(isContractor ? orders.ratingByCustomer : orders.ratingByContractor),
+  }).from(orders).where(
+    isContractor
+      ? and(eq(orders.contractorId, userId), isNotNull(orders.ratingByCustomer))
+      : and(eq(orders.customerId, userId), isNotNull(orders.ratingByContractor))
+  );
+
+  const avgRating = ratingData[0]?.avgRating ? parseFloat(ratingData[0].avgRating) : null;
+  const ratingCount = ratingData[0]?.ratingCount ?? 0;
+
   return c.json({
     data: {
       id: u.id,
@@ -38,6 +53,8 @@ usersRouter.get('/me', async (c) => {
       xp: u.xp,
       level: u.level,
       balance: u.balance,
+      avgRating,
+      ratingCount,
       createdAt: u.createdAt.toISOString(),
     },
   });
