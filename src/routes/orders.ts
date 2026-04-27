@@ -327,6 +327,13 @@ ordersRouter.post('/:id/confirm', async (c) => {
       .where(eq(users.id, order.contractorId));
   }
 
+  // Award XP to customer (+10 for completed order)
+  const customer = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.customerId)).limit(1);
+  const customerNewXp = (customer[0]?.xp ?? 0) + 10;
+  await db.update(users)
+    .set({ xp: customerNewXp, level: calcLevel(customerNewXp) })
+    .where(eq(users.id, order.customerId));
+
   await db.insert(orderHistory).values({
     orderId: id,
     status: 'completed',
