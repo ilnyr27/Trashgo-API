@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { users, otpCodes, refreshTokens } from '../db/schema.js';
+import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 
 const auth = new Hono();
 
@@ -26,6 +26,7 @@ const registerSchema = z.object({
   name: z.string().min(1).max(100),
   role: z.enum(['customer', 'contractor']),
   district: z.string().min(1).max(100),
+  refCode: z.string().optional(),
 });
 
 // Generate tokens
@@ -154,7 +155,7 @@ auth.post('/register', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { phone, code, name, role, district } = parsed.data;
+  const { phone, code, name, role, district, refCode } = parsed.data;
 
   // Verify OTP was used for this phone
   const otp = await db.select()
@@ -176,13 +177,30 @@ auth.post('/register', async (c) => {
     return c.json({ error: { code: 'USER_EXISTS', message: 'User already registered' } }, 409);
   }
 
+  // Resolve referrer if refCode provided
+  let referrerId: string | undefined;
+  if (refCode) {
+    const referrer = await db.select({ id: users.id }).from(users).where(eq(users.referralCode, refCode)).limit(1);
+    if (referrer.length > 0) referrerId = referrer[0].id;
+  }
+
+  // Generate unique referral code for new user
+  const newReferralCode = nanoid(8).toUpperCase();
+
   // Create user
   const newUser = await db.insert(users).values({
     phone,
     name,
     role,
     district,
+    referralCode: newReferralCode,
+    referredBy: referrerId,
   }).returning();
+
+  // Record referral relationship
+  if (referrerId) {
+    await db.insert(referrals).values({ referrerId, refereeId: newUser[0].id });
+  }
 
   const user = newUser[0];
   const tokens = generateTokens(user.id, user.role);

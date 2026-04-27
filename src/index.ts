@@ -7,6 +7,7 @@ import { timing } from 'hono/timing';
 import authRoutes from './routes/auth.js';
 import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
+import referralsRoutes from './routes/referrals.js';
 import { db } from './db/index.js';
 import { sql } from 'drizzle-orm';
 
@@ -33,7 +34,7 @@ app.use('*', cors({
 app.get('/', (c) => c.json({
   status: 'ok',
   service: 'trashgo-api',
-  version: '1.1.0',
+  version: '1.2.0',
   timestamp: new Date().toISOString(),
 }));
 
@@ -43,6 +44,7 @@ app.get('/health', (c) => c.json({ status: 'ok' }));
 app.route('/api/v1/auth', authRoutes);
 app.route('/api/v1/orders', ordersRoutes);
 app.route('/api/v1/users', usersRoutes);
+app.route('/api/v1/referrals', referralsRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -72,6 +74,9 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_customer INTEGER`);
     await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_contractor INTEGER`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS transport_mode VARCHAR(50) NOT NULL DEFAULT 'car'`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) UNIQUE`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id)`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS referrals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), referrer_id UUID NOT NULL REFERENCES users(id), referee_id UUID NOT NULL REFERENCES users(id), created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);

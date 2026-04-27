@@ -18,6 +18,8 @@ export const users = pgTable('users', {
   level: integer('level').notNull().default(1),
   balance: integer('balance').notNull().default(0),
   passwordHash: varchar('password_hash', { length: 255 }),
+  referralCode: varchar('referral_code', { length: 12 }).unique(),
+  referredBy: uuid('referred_by'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -76,6 +78,14 @@ export const messages = pgTable('messages', {
 }, (table) => [
   index('idx_messages_order').on(table.orderId, table.createdAt),
 ]);
+
+// Referrals
+export const referrals = pgTable('referrals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  referrerId: uuid('referrer_id').notNull().references(() => users.id),
+  refereeId: uuid('referee_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
 
 // Refresh tokens
 export const refreshTokens = pgTable('refresh_tokens', {
