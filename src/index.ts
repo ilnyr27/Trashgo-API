@@ -33,7 +33,7 @@ app.use('*', cors({
 app.get('/', (c) => c.json({
   status: 'ok',
   service: 'trashgo-api',
-  version: '1.0.0',
+  version: '1.1.0',
   timestamp: new Date().toISOString(),
 }));
 
