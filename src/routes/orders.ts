@@ -4,6 +4,7 @@ import { eq, desc, sql, asc, and, ne } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
+import { emitToUser } from '../ws.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -159,6 +160,18 @@ ordersRouter.post('/:id/messages', async (c) => {
   const senderName = sender[0]?.name ?? '';
 
   const msg = await db.insert(messages).values({ orderId: id, senderId: user.userId, senderName, text }).returning();
+
+  // Notify the other party via WebSocket
+  const recipientId = o.customerId === user.userId ? o.contractorId : o.customerId;
+  if (recipientId) {
+    emitToUser(recipientId, {
+      type: 'chat',
+      orderId: id,
+      title: `Новое сообщение от ${senderName}`,
+      message: text.length > 60 ? text.slice(0, 60) + '…' : text,
+    });
+  }
+
   return c.json({ data: {
     id: msg[0].id, senderId: msg[0].senderId, senderName: msg[0].senderName,
     text: msg[0].text, createdAt: msg[0].createdAt.toISOString(),
@@ -249,6 +262,22 @@ ordersRouter.patch('/:id/status', async (c) => {
     status,
     note: `Status changed by user ${user.userId}`,
   });
+
+  // Real-time notifications via WebSocket
+  const updatedOrder = updated[0];
+  const statusLabels: Record<string, string> = {
+    accepted: 'Исполнитель принял заказ',
+    in_progress: 'Исполнитель выполняет заказ',
+    pending_confirmation: 'Ожидает вашего подтверждения',
+    completed: 'Заказ выполнен',
+    cancelled: 'Заказ отменён',
+  };
+  const label = statusLabels[status] || status;
+  const event = { type: 'order_status', orderId: id, status, title: label, message: `Заказ #${id.slice(0, 8)}` };
+  if (updatedOrder.customerId) emitToUser(updatedOrder.customerId, event);
+  if (updatedOrder.contractorId && updatedOrder.contractorId !== updatedOrder.customerId) {
+    emitToUser(updatedOrder.contractorId, event);
+  }
 
   return c.json({ data: formatOrder(updated[0]) });
 });

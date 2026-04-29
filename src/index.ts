@@ -4,12 +4,15 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { timing } from 'hono/timing';
+import { streamSSE } from 'hono/streaming';
+import jwt from 'jsonwebtoken';
 import authRoutes from './routes/auth.js';
 import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
 import referralsRoutes from './routes/referrals.js';
 import { db } from './db/index.js';
 import { sql } from 'drizzle-orm';
+import { addClient, connectedCount } from './ws.js';
 
 const app = new Hono();
 
@@ -34,9 +37,39 @@ app.use('*', cors({
 app.get('/', (c) => c.json({
   status: 'ok',
   service: 'trashgo-api',
-  version: '1.3.0',
+  version: '1.4.0',
   timestamp: new Date().toISOString(),
+  ws_clients: connectedCount(),
 }));
+
+// SSE — real-time push notifications
+app.get('/api/v1/notifications/stream', (c) => {
+  const token = c.req.query('token') || '';
+  let userId: string | null = null;
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+    userId = payload.userId;
+  } catch {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const uid = userId;
+  return streamSSE(c, async (stream) => {
+    await stream.writeSSE({ data: JSON.stringify({ type: 'connected' }), event: 'message' });
+    const cleanup = addClient(uid, (event) => {
+      stream.writeSSE({ data: JSON.stringify(event), event: 'message' }).catch(() => {});
+    });
+    // heartbeat every 30s to keep connection alive
+    while (true) {
+      await stream.sleep(30000);
+      try {
+        await stream.writeSSE({ data: '', event: 'ping' });
+      } catch {
+        break;
+      }
+    }
+    cleanup();
+  });
+});
 
 app.get('/health', (c) => c.json({ status: 'ok' }));
 
@@ -90,11 +123,12 @@ await runMigrations();
 const port = parseInt(process.env.PORT || '3000');
 
 console.log(`
-  🚀 TrashGo API running on http://localhost:${port}
+  🚀 TrashGo API v1.4.0 on http://localhost:${port}
   📍 Health: http://localhost:${port}/health
   📍 Auth:   http://localhost:${port}/api/v1/auth
   📍 Orders: http://localhost:${port}/api/v1/orders
   📍 Users:  http://localhost:${port}/api/v1/users
+  📍 SSE:    http://localhost:${port}/api/v1/notifications/stream
 `);
 
 serve({ fetch: app.fetch, port });
