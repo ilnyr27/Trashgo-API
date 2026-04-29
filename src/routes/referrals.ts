@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
 import { users, referrals } from '../db/schema.js';
@@ -29,20 +29,32 @@ referralsRouter.get('/my', async (c) => {
     user = updated[0];
   }
 
-  // Get referred users
+  // Optional: filter by referred user role
+  const target = c.req.query('target'); // 'contractor' | 'customer' | undefined (all)
+
+  const whereClause = target === 'contractor'
+    ? and(eq(referrals.referrerId, userId), eq(users.role, 'contractor'))
+    : target === 'customer'
+    ? and(eq(referrals.referrerId, userId), eq(users.role, 'customer'))
+    : eq(referrals.referrerId, userId);
+
   const myReferrals = await db
-    .select({ name: users.name, joinedAt: users.createdAt })
+    .select({ name: users.name, role: users.role, joinedAt: users.createdAt })
     .from(referrals)
     .innerJoin(users, eq(users.id, referrals.refereeId))
-    .where(eq(referrals.referrerId, userId));
+    .where(whereClause);
+
+  const baseLink = `${FRONTEND_URL}/ref/${user.referralCode}`;
+  const link = target === 'contractor' ? `${baseLink}?role=contractor` : baseLink;
 
   return c.json({
     data: {
       code: user.referralCode,
-      link: `${FRONTEND_URL}/ref/${user.referralCode}`,
+      link,
       count: myReferrals.length,
       referrals: myReferrals.map((r) => ({
         name: r.name,
+        role: r.role,
         joinedAt: r.joinedAt.toISOString(),
       })),
     },

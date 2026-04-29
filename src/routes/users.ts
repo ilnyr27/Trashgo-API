@@ -15,6 +15,7 @@ const updateProfileSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   district: z.string().min(1).max(100).optional(),
   transportMode: z.enum(TRANSPORT_MODES).optional(),
+  addresses: z.array(z.string().max(300)).max(10).optional(),
 });
 
 // GET /users/me
@@ -42,6 +43,9 @@ usersRouter.get('/me', async (c) => {
   const avgRating = ratingData[0]?.avgRating ? parseFloat(ratingData[0].avgRating) : null;
   const ratingCount = ratingData[0]?.ratingCount ?? 0;
 
+  let parsedAddresses: string[] = [];
+  try { parsedAddresses = JSON.parse(u.addresses || '[]'); } catch {}
+
   return c.json({
     data: {
       id: u.id,
@@ -53,6 +57,7 @@ usersRouter.get('/me', async (c) => {
       xp: u.xp,
       level: u.level,
       balance: u.balance,
+      addresses: parsedAddresses,
       avgRating,
       ratingCount,
       createdAt: u.createdAt.toISOString(),
@@ -70,8 +75,12 @@ usersRouter.patch('/me', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
   }
 
+  const { addresses, ...rest } = parsed.data;
+  const dbSet: Record<string, unknown> = { ...rest };
+  if (addresses !== undefined) dbSet.addresses = JSON.stringify(addresses);
+
   const updated = await db.update(users)
-    .set(parsed.data)
+    .set(dbSet as any)
     .where(eq(users.id, userId))
     .returning();
 
@@ -80,6 +89,9 @@ usersRouter.patch('/me', async (c) => {
   }
 
   const u = updated[0];
+  let patchAddresses: string[] = [];
+  try { patchAddresses = JSON.parse(u.addresses || '[]'); } catch {}
+
   return c.json({
     data: {
       id: u.id,
@@ -91,6 +103,7 @@ usersRouter.patch('/me', async (c) => {
       xp: u.xp,
       level: u.level,
       balance: u.balance,
+      addresses: patchAddresses,
       createdAt: u.createdAt.toISOString(),
     },
   });

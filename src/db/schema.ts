@@ -20,6 +20,7 @@ export const users = pgTable('users', {
   passwordHash: varchar('password_hash', { length: 255 }),
   referralCode: varchar('referral_code', { length: 12 }).unique(),
   referredBy: uuid('referred_by'),
+  addresses: text('addresses').notNull().default('[]'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
