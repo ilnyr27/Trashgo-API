@@ -416,6 +416,29 @@ ordersRouter.post('/:id/rate', async (c) => {
   return c.json({ data: { ok: true } });
 });
 
+// POST /orders/:id/dispute — customer reports work not done correctly (task 29)
+ordersRouter.post('/:id/dispute', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const reason = String(body?.reason || '').slice(0, 500);
+
+  const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (current.length === 0) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  const order = current[0];
+  if (order.customerId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  if (order.status !== 'pending_confirmation') return c.json({ error: { code: 'INVALID', message: 'Order must be pending_confirmation' } }, 400);
+
+  await db.insert(orderHistory).values({ orderId: id, status: 'pending_confirmation', note: `DISPUTE: ${reason || 'No reason'}` });
+
+  emitToUser(user.userId, { type: 'order_status', orderId: id, title: 'Жалоба принята', message: 'Поддержка рассмотрит обращение в течение 7 дней' });
+  if (order.contractorId) {
+    emitToUser(order.contractorId, { type: 'order_status', orderId: id, title: 'Открыт спор по заказу', message: 'Заказчик сообщил о проблеме — ожидайте решения поддержки' });
+  }
+
+  return c.json({ data: { ok: true } });
+});
+
 // Helper
 function formatOrder(o: typeof orders.$inferSelect) {
   let photoUrls: string[] = [];

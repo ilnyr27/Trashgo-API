@@ -11,8 +11,9 @@ import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
 import referralsRoutes from './routes/referrals.js';
 import { db } from './db/index.js';
-import { sql } from 'drizzle-orm';
-import { addClient, connectedCount } from './ws.js';
+import { sql, and, eq, lt } from 'drizzle-orm';
+import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
+import { addClient, connectedCount, emitToUser } from './ws.js';
 
 const app = new Hono();
 
@@ -118,6 +119,40 @@ async function runMigrations() {
 }
 
 await runMigrations();
+
+// XP helpers (mirrors orders.ts)
+const AUTO_XP_THRESHOLDS = [0, 100, 200, 400, 700, 1000];
+function autoCalcLevel(xp: number): number {
+  for (let i = AUTO_XP_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (xp >= AUTO_XP_THRESHOLDS[i]) return i + 1;
+  }
+  return 1;
+}
+
+// Auto-confirm orders stuck in pending_confirmation for > 24h (task 28)
+async function autoConfirmStaleOrders() {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const stale = await db.select().from(ordersTable)
+      .where(and(eq(ordersTable.status, 'pending_confirmation'), lt(ordersTable.updatedAt, cutoff)));
+    for (const order of stale) {
+      await db.update(ordersTable).set({ status: 'completed', updatedAt: new Date() }).where(eq(ordersTable.id, order.id));
+      if (order.contractorId) {
+        const [ct] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.contractorId));
+        const newXp = (ct?.xp ?? 0) + 10;
+        await db.update(usersTable).set({ balance: sql`balance + ${order.price}`, xp: newXp, level: autoCalcLevel(newXp) }).where(eq(usersTable.id, order.contractorId));
+        emitToUser(order.contractorId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён автоматически', message: 'Заказчик не подтвердил в течение 24ч — оплата начислена' });
+      }
+      const [cu] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.customerId));
+      const cuXp = (cu?.xp ?? 0) + 10;
+      await db.update(usersTable).set({ xp: cuXp, level: autoCalcLevel(cuXp) }).where(eq(usersTable.id, order.customerId));
+      emitToUser(order.customerId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён', message: 'Автоматически подтверждён через 24 часа' });
+      await db.insert(orderHistoryTable).values({ orderId: order.id, status: 'completed', note: 'Auto-confirmed: 24h timeout' });
+      console.log(`[AUTO-CONFIRM] ${order.id}`);
+    }
+  } catch (e: any) { console.error('[AUTO-CONFIRM]', e.message); }
+}
+setInterval(autoConfirmStaleOrders, 5 * 60 * 1000);
 
 // Start server
 const port = parseInt(process.env.PORT || '3000');
