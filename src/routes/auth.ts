@@ -7,6 +7,7 @@ import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 import { checkReferralAchievements } from '../lib/achievements.js';
+import { sendOtp } from '../lib/sms.js';
 
 const auth = new Hono();
 
@@ -55,22 +56,27 @@ auth.post('/login', async (c) => {
 
   const { phone } = parsed.data;
 
-  // Fixed code 1111 until SMS provider is integrated
-  const code = '1111';
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  const isProd = !!process.env.SMS_RU_API_ID;
+  const code = isProd
+    ? String(Math.floor(1000 + Math.random() * 9000))
+    : '1111';
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await db.insert(otpCodes).values({ phone, code, expiresAt });
 
-  // Check if user exists
   const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
 
-  console.log(`[OTP] ${phone}: ${code}`);
+  if (isProd) {
+    await sendOtp(phone, code);
+  } else {
+    console.log(`[OTP DEV] ${phone}: ${code}`);
+  }
 
   return c.json({
     data: {
       otpSent: true,
       isNewUser: existing.length === 0,
-      devCode: code,
+      ...(isProd ? {} : { devCode: code }),
     },
   });
 });
