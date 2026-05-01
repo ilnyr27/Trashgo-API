@@ -21,6 +21,9 @@ export const users = pgTable('users', {
   referralCode: varchar('referral_code', { length: 12 }).unique(),
   referredBy: uuid('referred_by'),
   addresses: text('addresses').notNull().default('[]'),
+  notifPush: boolean('notif_push').notNull().default(true),
+  notifEmail: boolean('notif_email').notNull().default(false),
+  notifEmailAddress: varchar('notif_email_address', { length: 200 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -85,8 +88,22 @@ export const referrals = pgTable('referrals', {
   id: uuid('id').primaryKey().defaultRandom(),
   referrerId: uuid('referrer_id').notNull().references(() => users.id),
   refereeId: uuid('referee_id').notNull().references(() => users.id),
+  bonus150Paid: boolean('bonus_150_paid').notNull().default(false),
+  bonusExpiresAt: timestamp('bonus_expires_at'),
+  bonusMonthlyUsed: integer('bonus_monthly_used').notNull().default(0),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+// User achievements (unlocked)
+export const userAchievements = pgTable('user_achievements', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  achievementId: varchar('achievement_id', { length: 50 }).notNull(),
+  xpRewarded: integer('xp_rewarded').notNull().default(0),
+  unlockedAt: timestamp('unlocked_at').notNull().defaultNow(),
+}, (table) => [
+  index('idx_user_achievements_user').on(table.userId),
+]);
 
 // Refresh tokens
 export const refreshTokens = pgTable('refresh_tokens', {

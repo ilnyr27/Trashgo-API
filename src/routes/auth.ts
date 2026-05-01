@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
+import { checkReferralAchievements } from '../lib/achievements.js';
 
 const auth = new Hono();
 
@@ -199,7 +200,10 @@ auth.post('/register', async (c) => {
 
   // Record referral relationship
   if (referrerId) {
-    await db.insert(referrals).values({ referrerId, refereeId: newUser[0].id });
+    const bonusExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    await db.insert(referrals).values({ referrerId, refereeId: newUser[0].id, bonusExpiresAt });
+    // Check referral achievements for the referrer (fire and forget)
+    checkReferralAchievements(referrerId).catch(() => {});
   }
 
   const user = newUser[0];

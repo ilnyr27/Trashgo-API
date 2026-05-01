@@ -16,6 +16,9 @@ const updateProfileSchema = z.object({
   district: z.string().min(1).max(100).optional(),
   transportMode: z.enum(TRANSPORT_MODES).optional(),
   addresses: z.array(z.string().max(300)).max(10).optional(),
+  notifPush: z.boolean().optional(),
+  notifEmail: z.boolean().optional(),
+  notifEmailAddress: z.string().email().max(200).optional().nullable(),
 });
 
 // GET /users/me
@@ -60,6 +63,9 @@ usersRouter.get('/me', async (c) => {
       addresses: parsedAddresses,
       avgRating,
       ratingCount,
+      notifPush: u.notifPush ?? true,
+      notifEmail: u.notifEmail ?? false,
+      notifEmailAddress: u.notifEmailAddress ?? null,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -75,9 +81,10 @@ usersRouter.patch('/me', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
   }
 
-  const { addresses, ...rest } = parsed.data;
+  const { addresses, notifEmailAddress, ...rest } = parsed.data;
   const dbSet: Record<string, unknown> = { ...rest };
   if (addresses !== undefined) dbSet.addresses = JSON.stringify(addresses);
+  if (notifEmailAddress !== undefined) dbSet.notifEmailAddress = notifEmailAddress;
 
   const updated = await db.update(users)
     .set(dbSet as any)
@@ -104,6 +111,9 @@ usersRouter.patch('/me', async (c) => {
       level: u.level,
       balance: u.balance,
       addresses: patchAddresses,
+      notifPush: u.notifPush ?? true,
+      notifEmail: u.notifEmail ?? false,
+      notifEmailAddress: u.notifEmailAddress ?? null,
       createdAt: u.createdAt.toISOString(),
     },
   });

@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.js';
 import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
 import referralsRoutes from './routes/referrals.js';
+import achievementsRoutes from './routes/achievements.js';
 import { db } from './db/index.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
 import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
@@ -38,7 +39,7 @@ app.use('*', cors({
 app.get('/', (c) => c.json({
   status: 'ok',
   service: 'trashgo-api',
-  version: '1.4.0',
+  version: '1.5.0',
   timestamp: new Date().toISOString(),
   ws_clients: connectedCount(),
 }));
@@ -79,6 +80,7 @@ app.route('/api/v1/auth', authRoutes);
 app.route('/api/v1/orders', ordersRoutes);
 app.route('/api/v1/users', usersRoutes);
 app.route('/api/v1/referrals', referralsRoutes);
+app.route('/api/v1/achievements', achievementsRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -112,6 +114,14 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id)`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS referrals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), referrer_id UUID NOT NULL REFERENCES users(id), referee_id UUID NOT NULL REFERENCES users(id), created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS addresses TEXT NOT NULL DEFAULT '[]'`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_push BOOLEAN NOT NULL DEFAULT TRUE`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email_address VARCHAR(200)`);
+    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_150_paid BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_expires_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_monthly_used INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS user_achievements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), achievement_id VARCHAR(50) NOT NULL, xp_rewarded INTEGER NOT NULL DEFAULT 0, unlocked_at TIMESTAMP NOT NULL DEFAULT NOW())`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);

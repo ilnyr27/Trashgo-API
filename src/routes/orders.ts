@@ -2,9 +2,10 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { eq, desc, sql, asc, and, ne } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { orders, orderHistory, users, messages } from '../db/schema.js';
+import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 import { emitToUser } from '../ws.js';
+import { checkOrderAchievements, checkRatingAchievements } from '../lib/achievements.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -369,6 +370,54 @@ ordersRouter.post('/:id/confirm', async (c) => {
     note: `Confirmed by customer ${user.userId}`,
   });
 
+  // Check achievements for both parties (fire and forget — don't block response)
+  checkOrderAchievements(order.customerId, 'customer').catch(() => {});
+  if (order.contractorId) {
+    checkOrderAchievements(order.contractorId, 'contractor').catch(() => {});
+
+    // Referral bonus: if contractor was referred, check 150₽ milestone + 5% monthly
+    try {
+      const contractorRow = await db.select({ referredBy: users.referredBy })
+        .from(users).where(eq(users.id, order.contractorId)).limit(1);
+      const referrerId = contractorRow[0]?.referredBy;
+
+      if (referrerId) {
+        const refRow = await db.select().from(referrals)
+          .where(and(eq(referrals.referrerId, referrerId), eq(referrals.refereeId, order.contractorId)))
+          .limit(1);
+        const ref = refRow[0];
+
+        if (ref) {
+          // Count completed orders by referee
+          const [countRow] = await db.select({ cnt: sql<number>`count(*)` })
+            .from(orders)
+            .where(and(eq(orders.contractorId, order.contractorId), eq(orders.status, 'completed')));
+          const refeeOrderCount = Number(countRow?.cnt ?? 0);
+
+          // Award 150₽ bonus after referee's 5th completed order
+          if (!ref.bonus150Paid && refeeOrderCount >= 5) {
+            await db.update(users).set({ balance: sql`balance + 150` }).where(eq(users.id, referrerId));
+            await db.update(referrals).set({ bonus150Paid: true }).where(eq(referrals.id, ref.id));
+            emitToUser(referrerId, { type: 'order_status', orderId: id, title: '💰 Бонус за напарника!', message: 'Ваш напарник выполнил 5 заказов — вам начислено +150₽' });
+          }
+
+          // 5% bonus during referee's first 30 days, cap 500₽/month
+          if (ref.bonusExpiresAt && new Date() < ref.bonusExpiresAt) {
+            const cap = 500;
+            const bonus5pct = Math.floor(order.price * 0.05);
+            const alreadyUsed = ref.bonusMonthlyUsed ?? 0;
+            const canAward = Math.min(bonus5pct, cap - alreadyUsed);
+            if (canAward > 0) {
+              await db.update(users).set({ balance: sql`balance + ${canAward}` }).where(eq(users.id, referrerId));
+              await db.update(referrals).set({ bonusMonthlyUsed: alreadyUsed + canAward }).where(eq(referrals.id, ref.id));
+              emitToUser(referrerId, { type: 'order_status', orderId: id, title: `💰 +${canAward}₽ бонус`, message: `5% от заказа напарника (${order.price}₽)` });
+            }
+          }
+        }
+      }
+    } catch { /* referral bonus failure doesn't block main flow */ }
+  }
+
   return c.json({ data: formatOrder(updated[0]) });
 });
 
@@ -402,6 +451,8 @@ ordersRouter.post('/:id/rate', async (c) => {
       const newXp = (contractor[0]?.xp ?? 0) + rating;
       const newLevel = calcLevel(newXp);
       await db.update(users).set({ xp: newXp, level: newLevel }).where(eq(users.id, order.contractorId));
+      // Check rating achievements for the contractor who received the rating
+      checkRatingAchievements(order.contractorId, rating).catch(() => {});
     }
   } else if (order.contractorId === user.userId) {
     // Contractor rates customer
