@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc, sql, asc, and, ne } from 'drizzle-orm';
+import { eq, desc, sql, asc, and, ne, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
@@ -56,8 +56,26 @@ ordersRouter.get('/', async (c) => {
     .orderBy(desc(orders.createdAt))
     .limit(50);
 
+  // Fetch counterpart names for history display (task 16)
+  const counterpartIds = [...new Set(
+    result.map(o => mode === 'contractor' ? o.customerId : o.contractorId).filter(Boolean) as string[]
+  )];
+  const counterparts: Record<string, string> = {};
+  if (counterpartIds.length > 0) {
+    const names = await db.select({ id: users.id, name: users.name })
+      .from(users)
+      .where(inArray(users.id, counterpartIds));
+    names.forEach(u => { counterparts[u.id] = u.name; });
+  }
+
   return c.json({
-    data: result.map(formatOrder),
+    data: result.map(o => ({
+      ...formatOrder(o),
+      ...(mode === 'contractor'
+        ? { customerName: counterparts[o.customerId] ?? '' }
+        : { contractorName: o.contractorId ? (counterparts[o.contractorId] ?? '') : '' }
+      ),
+    })),
     meta: { total: result.length },
   });
 });
