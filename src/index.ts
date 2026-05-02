@@ -82,6 +82,22 @@ app.route('/api/v1/users', usersRoutes);
 app.route('/api/v1/referrals', referralsRoutes);
 app.route('/api/v1/achievements', achievementsRoutes);
 
+// Geocoding proxy — avoids Nominatim browser User-Agent restrictions
+app.get('/api/v1/geocode', async (c) => {
+  const q = c.req.query('q');
+  if (!q) return c.json([], 200);
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=ru`,
+      { headers: { 'User-Agent': 'TrashGo/1.0 (trashgo-gamma.vercel.app)' } }
+    );
+    const data = await res.json();
+    return c.json(data);
+  } catch {
+    return c.json([], 200);
+  }
+});
+
 // 404 handler
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
 
