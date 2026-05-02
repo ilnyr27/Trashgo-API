@@ -197,6 +197,48 @@ ordersRouter.post('/:id/messages', async (c) => {
   } }, 201);
 });
 
+// PATCH /orders/:id — update order content (customer only, while status=waiting)
+ordersRouter.patch('/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+
+  const existing = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (existing.length === 0) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  const order = existing[0];
+  if (order.customerId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  if (order.status !== 'waiting') return c.json({ error: { code: 'CONFLICT', message: 'Cannot edit order that is already taken' } }, 409);
+
+  const updateSchema = z.object({
+    address: z.string().min(1).max(500).optional(),
+    district: z.string().min(1).max(100).optional(),
+    volume: z.number().int().min(1).max(50).optional(),
+    price: z.number().int().min(10).max(10000).optional(),
+    description: z.string().max(1000).optional(),
+    scheduledAt: z.string().datetime().optional().nullable(),
+    asap: z.boolean().optional(),
+    photoUrls: z.array(z.string()).max(5).optional(),
+  });
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
+
+  const d = parsed.data;
+  const updated = await db.update(orders).set({
+    ...(d.address !== undefined && { address: d.address }),
+    ...(d.district !== undefined && { district: d.district }),
+    ...(d.volume !== undefined && { volume: d.volume }),
+    ...(d.price !== undefined && { price: d.price }),
+    ...(d.description !== undefined && { description: d.description }),
+    ...(d.photoUrls !== undefined && { photoUrls: JSON.stringify(d.photoUrls) }),
+    ...(d.asap !== undefined && { asap: d.asap }),
+    ...((d.asap === true) && { scheduledAt: null }),
+    ...((d.asap === false && d.scheduledAt) && { scheduledAt: new Date(d.scheduledAt) }),
+    updatedAt: new Date(),
+  }).where(eq(orders.id, id)).returning();
+
+  return c.json({ data: formatOrder(updated[0]) });
+});
+
 // POST /orders — create an order (any authenticated user)
 ordersRouter.post('/', async (c) => {
   const user = c.get('user');
