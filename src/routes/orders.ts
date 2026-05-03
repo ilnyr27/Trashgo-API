@@ -5,7 +5,7 @@ import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 import { emitToUser } from '../ws.js';
-import { checkOrderAchievements, checkRatingAchievements } from '../lib/achievements.js';
+import { checkOrderAchievements, checkRatingAchievements, checkAsapAchievements } from '../lib/achievements.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -434,6 +434,7 @@ ordersRouter.post('/:id/confirm', async (c) => {
   checkOrderAchievements(order.customerId, 'customer').catch(() => {});
   if (order.contractorId) {
     checkOrderAchievements(order.contractorId, 'contractor').catch(() => {});
+    if (order.asap) checkAsapAchievements(order.contractorId).catch(() => {});
 
     // Referral bonus: if contractor was referred, check 150₽ milestone + 5% monthly
     try {
