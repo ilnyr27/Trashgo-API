@@ -207,7 +207,7 @@ ordersRouter.patch('/:id', async (c) => {
   if (existing.length === 0) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
   const order = existing[0];
   if (order.customerId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
-  if (order.status !== 'waiting') return c.json({ error: { code: 'CONFLICT', message: 'Cannot edit order that is already taken' } }, 409);
+  if (order.status !== 'new') return c.json({ error: { code: 'CONFLICT', message: 'Cannot edit order that is already taken' } }, 409);
 
   const updateSchema = z.object({
     address: z.string().min(1).max(500).optional(),
