@@ -45,13 +45,19 @@ referralsRouter.get('/my', async (c) => {
     .where(whereClause);
 
   const baseLink = `${FRONTEND_URL}/ref/${user.referralCode}`;
-  const link = target === 'contractor' ? `${baseLink}?role=contractor` : baseLink;
+  const link = target === 'contractor'
+    ? `${baseLink}?role=contractor`
+    : `${baseLink}?role=customer`;
+
+  const count = myReferrals.length;
+  const discount = target === 'customer' ? Math.min(count * 2, 20) : undefined;
 
   return c.json({
     data: {
       code: user.referralCode,
       link,
-      count: myReferrals.length,
+      count,
+      ...(discount !== undefined ? { discount } : {}),
       referrals: myReferrals.map((r) => ({
         name: r.name,
         role: r.role,

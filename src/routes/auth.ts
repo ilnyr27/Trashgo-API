@@ -7,6 +7,7 @@ import { eq, and, gt } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 import { checkReferralAchievements } from '../lib/achievements.js';
+import { emitToUser } from '../ws.js';
 import { sendOtp } from '../lib/sms.js';
 import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
 
@@ -233,6 +234,11 @@ auth.post('/register', async (c) => {
     await db.insert(referrals).values({ referrerId, refereeId: newUser[0].id, bonusExpiresAt });
     // Check referral achievements for the referrer (fire and forget)
     checkReferralAchievements(referrerId).catch(() => {});
+    // Notify referrer via SSE
+    const bonusMsg = role === 'contractor'
+      ? `Напарник присоединился! После 5 заказов вы получите +150₽`
+      : `Сосед зарегистрировался — ваша скидка увеличилась`;
+    emitToUser(referrerId, { type: 'xp', title: '👥 Новый реферал!', message: bonusMsg });
   }
 
   const user = newUser[0];
