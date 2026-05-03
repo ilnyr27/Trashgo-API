@@ -83,12 +83,14 @@ app.route('/api/v1/referrals', referralsRoutes);
 app.route('/api/v1/achievements', achievementsRoutes);
 
 // Geocoding proxy — avoids Nominatim browser User-Agent restrictions
+// ?q=... &limit=N (default 1, max 5)
 app.get('/api/v1/geocode', async (c) => {
   const q = c.req.query('q');
+  const limit = Math.min(5, Math.max(1, parseInt(c.req.query('limit') ?? '1', 10) || 1));
   if (!q) return c.json([], 200);
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=ru`,
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=${limit}&accept-language=ru`,
       { headers: { 'User-Agent': 'TrashGo/1.0 (trashgo-gamma.vercel.app)' } }
     );
     const data = await res.json();
@@ -97,6 +99,80 @@ app.get('/api/v1/geocode', async (c) => {
     return c.json([], 200);
   }
 });
+
+// Telegram Bot webhook — receives OTP link requests from users
+app.post('/api/v1/auth/telegram/webhook', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ ok: true });
+
+  const message = body.message;
+  if (!message?.text || !message?.chat?.id) return c.json({ ok: true });
+
+  const chatId = String(message.chat.id);
+  const text = message.text.trim();
+
+  // Extract phone from /start PHONE or raw phone input
+  const phoneMatch = text.replace('/start ', '').match(/^(\+?[78]?\d{9,15})$/) ||
+    decodeURIComponent(text.replace('/start ', '')).match(/^(\+?[78]?\d{9,15})$/);
+  const phone = phoneMatch ? phoneMatch[1] : null;
+
+  if (!phone) {
+    await sendTelegramMessage(chatId, 'Введите номер телефона или перейдите по ссылке из приложения TrashGo.');
+    return c.json({ ok: true });
+  }
+
+  // Normalize phone
+  const digits = phone.replace(/\D/g, '');
+  const normalized = digits.startsWith('7') ? `+${digits}` : digits.startsWith('8') ? `+7${digits.slice(1)}` : `+7${digits}`;
+  const phoneForms = [normalized, digits, phone, `+${digits}`, `8${digits.slice(1)}`];
+
+  // Find user by phone variants
+  const { users: usersTable, otpCodes: otpCodesTable } = await import('./db/schema.js');
+  const { eq, or, and, gt, desc } = await import('drizzle-orm');
+
+  let user = null;
+  for (const p of phoneForms) {
+    const rows = await db.select({ id: usersTable.id, telegramChatId: usersTable.telegramChatId })
+      .from(usersTable).where(eq(usersTable.phone, p)).limit(1);
+    if (rows.length > 0) { user = rows[0]; break; }
+  }
+
+  // Link this Telegram chat to the user if not already linked
+  if (user && user.telegramChatId !== chatId) {
+    await db.update(usersTable).set({ telegramChatId: chatId }).where(eq(usersTable.id, user.id));
+  }
+
+  // Find the latest valid OTP for this phone (try all variants)
+  let otp = null;
+  for (const p of phoneForms) {
+    const rows = await db.select()
+      .from(otpCodesTable)
+      .where(and(eq(otpCodesTable.phone, p), eq(otpCodesTable.used, 0), gt(otpCodesTable.expiresAt, new Date())))
+      .orderBy(desc(otpCodesTable.createdAt))
+      .limit(1);
+    if (rows.length > 0) { otp = rows[0]; break; }
+  }
+
+  const { sendTelegramOtp } = await import('./lib/telegram.js');
+
+  if (otp) {
+    await sendTelegramOtp(chatId, otp.code);
+  } else {
+    await sendTelegramMessage(chatId, `✅ Telegram привязан к номеру ${normalized}.\n\nТеперь запросите код в приложении TrashGo, и он придёт сюда.`);
+  }
+
+  return c.json({ ok: true });
+});
+
+async function sendTelegramMessage(chatId: string, text: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  }).catch(() => {});
+}
 
 // 404 handler
 app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
@@ -138,6 +214,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_monthly_used INTEGER NOT NULL DEFAULT 0`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS user_achievements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), achievement_id VARCHAR(50) NOT NULL, xp_rewarded INTEGER NOT NULL DEFAULT 0, unlocked_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id)`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(30)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);

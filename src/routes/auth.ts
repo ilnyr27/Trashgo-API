@@ -8,6 +8,7 @@ import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 import { checkReferralAchievements } from '../lib/achievements.js';
 import { sendOtp } from '../lib/sms.js';
+import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
 
 const auth = new Hono();
 
@@ -56,7 +57,9 @@ auth.post('/login', async (c) => {
 
   const { phone } = parsed.data;
 
-  const isProd = !!process.env.SMS_RU_API_ID;
+  const useTelegram = hasTelegram();
+  const useSms = !!process.env.SMS_RU_API_ID;
+  const isProd = useTelegram || useSms;
   const code = isProd
     ? String(Math.floor(1000 + Math.random() * 9000))
     : '1111';
@@ -64,19 +67,39 @@ auth.post('/login', async (c) => {
 
   await db.insert(otpCodes).values({ phone, code, expiresAt });
 
-  const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  const existing = await db.select({ id: users.id, telegramChatId: users.telegramChatId })
+    .from(users).where(eq(users.phone, phone)).limit(1);
 
-  if (isProd) {
+  let channel: 'telegram' | 'sms' | 'dev' = 'dev';
+  let telegramBotLink: string | undefined;
+
+  if (useTelegram) {
+    const chatId = existing[0]?.telegramChatId;
+    if (chatId) {
+      await sendTelegramOtp(chatId, code);
+      channel = 'telegram';
+    } else {
+      // User hasn't linked Telegram yet — tell frontend to show the bot link
+      const botUsername = await getBotUsername();
+      const phoneEncoded = encodeURIComponent(phone);
+      telegramBotLink = botUsername ? `https://t.me/${botUsername}?start=${phoneEncoded}` : undefined;
+      channel = 'telegram';
+    }
+  } else if (useSms) {
     await sendOtp(phone, code);
+    channel = 'sms';
   } else {
     console.log(`[OTP DEV] ${phone}: ${code}`);
+    channel = 'dev';
   }
 
   return c.json({
     data: {
-      otpSent: true,
+      otpSent: channel !== 'telegram' || !!existing[0]?.telegramChatId,
       isNewUser: existing.length === 0,
-      ...(isProd ? {} : { devCode: code }),
+      channel,
+      ...(telegramBotLink ? { telegramBotLink } : {}),
+      ...(channel === 'dev' ? { devCode: code } : {}),
     },
   });
 });
