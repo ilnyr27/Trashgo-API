@@ -88,13 +88,24 @@ app.route('/api/v1/leaderboard', leaderboardRoutes);
 
 // Geocoding proxy — avoids Nominatim browser User-Agent restrictions
 // ?q=... &limit=N (default 1, max 5)
+// Bounded to Kazan (viewbox) and restricted to Russia for accuracy
 app.get('/api/v1/geocode', async (c) => {
   const q = c.req.query('q');
   const limit = Math.min(5, Math.max(1, parseInt(c.req.query('limit') ?? '1', 10) || 1));
   if (!q) return c.json([], 200);
   try {
+    const params = new URLSearchParams({
+      q,
+      format: 'json',
+      limit: String(limit),
+      'accept-language': 'ru',
+      countrycodes: 'ru',
+      addressdetails: '1',
+      bounded: '1',
+      viewbox: '48.7,56.05,49.55,55.55', // Kazan bounding box
+    });
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=${limit}&accept-language=ru`,
+      `https://nominatim.openstreetmap.org/search?${params}`,
       { headers: { 'User-Agent': 'TrashGo/1.0 (trashgo-gamma.vercel.app)' } }
     );
     const data = await res.json();
