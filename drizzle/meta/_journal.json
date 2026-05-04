@@ -15,6 +15,13 @@
       "when": 1745241600000,
       "tag": "0001_add_photo_urls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777879154464,
+      "tag": "0002_worthless_black_queen",
+      "breakpoints": true
     }
   ]
 }

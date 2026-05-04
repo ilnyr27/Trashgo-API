@@ -219,6 +219,8 @@ async function runMigrations() {
     await db.execute(sql`CREATE TABLE IF NOT EXISTS user_achievements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), achievement_id VARCHAR(50) NOT NULL, xp_rewarded INTEGER NOT NULL DEFAULT 0, unlocked_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id)`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(30)`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS subscriptions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), customer_id UUID NOT NULL REFERENCES users(id), address TEXT NOT NULL, district VARCHAR(100) NOT NULL DEFAULT '', days TEXT NOT NULL DEFAULT '[]', time VARCHAR(8) NOT NULL DEFAULT '18:00', price INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
