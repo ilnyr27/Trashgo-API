@@ -10,6 +10,7 @@ import { checkReferralAchievements } from '../lib/achievements.js';
 import { emitToUser } from '../ws.js';
 import { sendOtp } from '../lib/sms.js';
 import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
+import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
 
 const auth = new Hono();
 
@@ -32,6 +33,10 @@ const registerSchema = z.object({
   district: z.string().min(1).max(100),
   refCode: z.string().optional(),
 });
+
+function formatUser(u: { id: string; phone: string; name: string; role: string; district: string; xp: number; level: number; createdAt: Date }) {
+  return { id: u.id, phone: u.phone, name: u.name, role: u.role, district: u.district, xp: u.xp, level: u.level, createdAt: u.createdAt.toISOString() };
+}
 
 // Generate tokens
 function generateTokens(userId: string, role: 'customer' | 'contractor') {
@@ -268,6 +273,101 @@ auth.post('/register', async (c) => {
       refreshToken: tokens.refreshToken,
     },
   }, 201);
+});
+
+// POST /auth/verify-firebase — verify Firebase Phone Auth ID token (free SMS via Firebase)
+auth.post('/verify-firebase', async (c) => {
+  if (!isFirebaseAdminReady()) {
+    return c.json({ error: { code: 'NOT_CONFIGURED', message: 'Firebase not configured on server' } }, 503);
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const { idToken } = body;
+  if (!idToken) return c.json({ error: { code: 'VALIDATION', message: 'Missing idToken' } }, 400);
+
+  const phone = await verifyFirebaseIdToken(idToken);
+  if (!phone) return c.json({ error: { code: 'INVALID_TOKEN', message: 'Invalid Firebase ID token' } }, 401);
+
+  const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+
+  if (existing.length === 0) {
+    // New user — issue short-lived phone-verified token for registration
+    const tempToken = jwt.sign(
+      { phone, type: 'firebase_verified' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '10m' }
+    );
+    return c.json({ data: { isNewUser: true, phone, tempToken } });
+  }
+
+  const userRow = existing[0];
+  const tokens = generateTokens(userRow.id, userRow.role);
+  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await db.insert(refreshTokens).values({ userId: userRow.id, token: tokens.refreshToken, expiresAt: refreshExpires });
+
+  return c.json({
+    data: {
+      user: formatUser(userRow),
+      token: tokens.token,
+      refreshToken: tokens.refreshToken,
+    },
+  });
+});
+
+// POST /auth/register-firebase — register new user after Firebase phone verification
+auth.post('/register-firebase', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { tempToken, name, role, district, refCode } = body;
+
+  if (!tempToken || !name || !role || !district) {
+    return c.json({ error: { code: 'VALIDATION', message: 'Missing fields' } }, 400);
+  }
+  if (!['customer', 'contractor'].includes(role)) {
+    return c.json({ error: { code: 'VALIDATION', message: 'Invalid role' } }, 400);
+  }
+
+  let phone: string;
+  try {
+    const payload = jwt.verify(tempToken, process.env.JWT_SECRET!) as { phone: string; type: string };
+    if (payload.type !== 'firebase_verified') throw new Error('Wrong token type');
+    phone = payload.phone;
+  } catch {
+    return c.json({ error: { code: 'INVALID_TOKEN', message: 'Invalid or expired verification token' } }, 401);
+  }
+
+  const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  if (existing.length > 0) {
+    return c.json({ error: { code: 'USER_EXISTS', message: 'User already registered' } }, 409);
+  }
+
+  let referrerId: string | undefined;
+  if (refCode) {
+    const referrer = await db.select({ id: users.id }).from(users).where(eq(users.referralCode, refCode)).limit(1);
+    if (referrer.length > 0) referrerId = referrer[0].id;
+  }
+
+  const newReferralCode = nanoid(8).toUpperCase();
+  const newUser = await db.insert(users).values({
+    phone, name, role, district,
+    referralCode: newReferralCode,
+    referredBy: referrerId,
+  }).returning();
+
+  if (referrerId) {
+    const bonusExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.insert(referrals).values({ referrerId, refereeId: newUser[0].id, bonusExpiresAt });
+    checkReferralAchievements(referrerId).catch(() => {});
+    const bonusMsg = role === 'contractor'
+      ? `Напарник присоединился! После 5 заказов вы получите +150₽`
+      : `Сосед зарегистрировался — ваша скидка увеличилась`;
+    emitToUser(referrerId, { type: 'xp', title: '👥 Новый реферал!', message: bonusMsg });
+  }
+
+  const user = newUser[0];
+  const tokens = generateTokens(user.id, user.role);
+  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await db.insert(refreshTokens).values({ userId: user.id, token: tokens.refreshToken, expiresAt: refreshExpires });
+
+  return c.json({ data: { user: formatUser(user), token: tokens.token, refreshToken: tokens.refreshToken } }, 201);
 });
 
 // POST /auth/refresh — refresh access token
