@@ -1,4 +1,4 @@
-ALTER TYPE "public"."order_status" ADD VALUE 'pending_confirmation' BEFORE 'completed';--> statement-breakpoint
+DO $migrate$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_confirmation' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN EXECUTE 'ALTER TYPE "public"."order_status" ADD VALUE ''pending_confirmation'' BEFORE ''completed'''; END IF; END $migrate$;--> statement-breakpoint
 CREATE TABLE "messages" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"order_id" uuid NOT NULL,
