@@ -11,6 +11,8 @@ import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
 import referralsRoutes from './routes/referrals.js';
 import achievementsRoutes from './routes/achievements.js';
+import subscriptionsRoutes from './routes/subscriptions.js';
+import leaderboardRoutes from './routes/leaderboard.js';
 import { db } from './db/index.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
 import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
@@ -81,6 +83,8 @@ app.route('/api/v1/orders', ordersRoutes);
 app.route('/api/v1/users', usersRoutes);
 app.route('/api/v1/referrals', referralsRoutes);
 app.route('/api/v1/achievements', achievementsRoutes);
+app.route('/api/v1/subscriptions', subscriptionsRoutes);
+app.route('/api/v1/leaderboard', leaderboardRoutes);
 
 // Geocoding proxy — avoids Nominatim browser User-Agent restrictions
 // ?q=... &limit=N (default 1, max 5)
