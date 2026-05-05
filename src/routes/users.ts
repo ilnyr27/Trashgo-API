@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, isNotNull, avg, count } from 'drizzle-orm';
+import { eq, and, isNotNull, avg, count, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.js';
 import { users, orders } from '../db/schema.js';
@@ -116,6 +116,40 @@ usersRouter.patch('/me', async (c) => {
       notifEmailAddress: u.notifEmailAddress ?? null,
       createdAt: u.createdAt.toISOString(),
     },
+  });
+});
+
+// GET /users/payment-history — last 50 completed transactions
+usersRouter.get('/payment-history', async (c) => {
+  const { userId } = c.get('user');
+  const userRow = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!userRow.length) return c.json({ error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+
+  const isContractor = userRow[0].role === 'contractor';
+  const history = await db.select({
+    id: orders.id,
+    price: orders.price,
+    address: orders.address,
+    district: orders.district,
+    updatedAt: orders.updatedAt,
+  }).from(orders)
+    .where(
+      isContractor
+        ? and(eq(orders.contractorId, userId), eq(orders.status, 'completed'))
+        : and(eq(orders.customerId, userId), eq(orders.status, 'completed'))
+    )
+    .orderBy(desc(orders.updatedAt))
+    .limit(50);
+
+  return c.json({
+    data: history.map(o => ({
+      id: o.id,
+      amount: o.price,
+      address: o.address,
+      district: o.district,
+      date: o.updatedAt.toISOString(),
+      type: isContractor ? 'earning' : 'payment',
+    })),
   });
 });
 
