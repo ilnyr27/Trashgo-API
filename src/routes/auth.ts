@@ -8,7 +8,7 @@ import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 import { checkReferralAchievements } from '../lib/achievements.js';
 import { emitToUser } from '../ws.js';
-import { sendOtp } from '../lib/sms.js';
+import { sendOtp, hasSms } from '../lib/sms.js';
 import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
 import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
 import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
@@ -68,7 +68,7 @@ auth.post('/login', async (c) => {
   const { phone, deliveryEmail } = parsed.data;
 
   const useTelegram = hasTelegram();
-  const useSms = !!process.env.SMS_RU_API_ID;
+  const useSms = hasSms();
   const useEmail = isEmailEnabled() && !!deliveryEmail;
   const isProd = useTelegram || useSms || useEmail;
   const code = isProd
