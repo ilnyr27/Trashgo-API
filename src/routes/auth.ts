@@ -11,12 +11,14 @@ import { emitToUser } from '../ws.js';
 import { sendOtp } from '../lib/sms.js';
 import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
 import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
+import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
 
 const auth = new Hono();
 
 // Validation schemas
 const loginSchema = z.object({
   phone: z.string().min(10).max(20),
+  deliveryEmail: z.string().email().optional(),
 });
 
 const verifySchema = z.object({
@@ -63,11 +65,12 @@ auth.post('/login', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid phone', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { phone } = parsed.data;
+  const { phone, deliveryEmail } = parsed.data;
 
   const useTelegram = hasTelegram();
   const useSms = !!process.env.SMS_RU_API_ID;
-  const isProd = useTelegram || useSms;
+  const useEmail = isEmailEnabled() && !!deliveryEmail;
+  const isProd = useTelegram || useSms || useEmail;
   const code = isProd
     ? String(Math.floor(1000 + Math.random() * 9000))
     : '1111';
@@ -78,16 +81,19 @@ auth.post('/login', async (c) => {
   const existing = await db.select({ id: users.id, telegramChatId: users.telegramChatId })
     .from(users).where(eq(users.phone, phone)).limit(1);
 
-  let channel: 'telegram' | 'sms' | 'dev' = 'dev';
+  let channel: 'telegram' | 'sms' | 'dev' | 'email' = 'dev';
   let telegramBotLink: string | undefined;
 
-  if (useTelegram) {
+  // Email takes priority if explicitly requested
+  if (useEmail && deliveryEmail) {
+    await sendEmailOtp(deliveryEmail, code);
+    channel = 'email';
+  } else if (useTelegram) {
     const chatId = existing[0]?.telegramChatId;
     if (chatId) {
       await sendTelegramOtp(chatId, code);
       channel = 'telegram';
     } else {
-      // User hasn't linked Telegram yet — tell frontend to show the bot link
       const botUsername = await getBotUsername();
       const phoneEncoded = encodeURIComponent(phone);
       telegramBotLink = botUsername ? `https://t.me/${botUsername}?start=${phoneEncoded}` : undefined;
@@ -107,6 +113,7 @@ auth.post('/login', async (c) => {
       isNewUser: existing.length === 0,
       channel,
       ...(telegramBotLink ? { telegramBotLink } : {}),
+      ...(deliveryEmail && channel === 'email' ? { deliveryEmail } : {}),
       ...(channel === 'dev' ? { devCode: code } : {}),
     },
   });

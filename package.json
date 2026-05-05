@@ -19,6 +19,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "firebase-admin": "^13.8.0",
+    "resend": "^4.0.0",
     "hono": "^4.12.14",
     "jsonwebtoken": "^9.0.3",
     "nanoid": "^5.1.7",
