@@ -5,18 +5,14 @@ import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 import { emitToUser } from '../ws.js';
-import { checkOrderAchievements, checkRatingAchievements, checkAsapAchievements } from '../lib/achievements.js';
+import {
+  checkOrderAchievements, checkRatingAchievements, checkAsapAchievements,
+  checkVolumeAchievements, checkDistrictAchievements, checkTimeAchievements,
+  checkEcoAchievements, checkCustomerOrderAchievements, checkVehicleAchievements,
+  checkTenureAchievements, calcLevel,
+} from '../lib/achievements.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
-
-// XP level thresholds (minimum total XP to reach each level)
-const XP_THRESHOLDS = [0, 100, 200, 400, 700, 1000];
-function calcLevel(xp: number): number {
-  for (let i = XP_THRESHOLDS.length - 1; i >= 0; i--) {
-    if (xp >= XP_THRESHOLDS[i]) return i + 1;
-  }
-  return 1;
-}
 
 // All routes require auth
 ordersRouter.use('*', authMiddleware);
@@ -267,6 +263,8 @@ ordersRouter.post('/', async (c) => {
     note: 'Order created',
   });
 
+  checkCustomerOrderAchievements(user.userId).catch(() => {});
+
   return c.json({ data: formatOrder(newOrder[0]) }, 201);
 });
 
@@ -432,8 +430,14 @@ ordersRouter.post('/:id/confirm', async (c) => {
 
   // Check achievements for both parties (fire and forget — don't block response)
   checkOrderAchievements(order.customerId, 'customer').catch(() => {});
+  checkEcoAchievements(order.customerId).catch(() => {});
   if (order.contractorId) {
     checkOrderAchievements(order.contractorId, 'contractor').catch(() => {});
+    checkVolumeAchievements(order.contractorId).catch(() => {});
+    checkDistrictAchievements(order.contractorId).catch(() => {});
+    checkTimeAchievements(order.contractorId).catch(() => {});
+    checkVehicleAchievements(order.contractorId).catch(() => {});
+    checkTenureAchievements(order.contractorId).catch(() => {});
     if (order.asap) checkAsapAchievements(order.contractorId).catch(() => {});
 
     // Referral bonus: if contractor was referred, check 150₽ milestone + 5% monthly

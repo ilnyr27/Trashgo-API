@@ -25,6 +25,7 @@ export const users = pgTable('users', {
   notifEmail: boolean('notif_email').notNull().default(false),
   notifEmailAddress: varchar('notif_email_address', { length: 200 }),
   telegramChatId: varchar('telegram_chat_id', { length: 30 }),
+  inn: varchar('inn', { length: 12 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 

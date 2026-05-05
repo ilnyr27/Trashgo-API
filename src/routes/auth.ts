@@ -31,6 +31,8 @@ const registerSchema = z.object({
   name: z.string().min(1).max(100),
   role: z.enum(['customer', 'contractor']),
   district: z.string().min(1).max(100),
+  transportMode: z.string().optional(),
+  inn: z.string().regex(/^\d{12}$/).optional().or(z.literal('')),
   refCode: z.string().optional(),
 });
 
@@ -191,7 +193,7 @@ auth.post('/register', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { phone, code, name, role, district, refCode } = parsed.data;
+  const { phone, code, name, role, district, transportMode, inn, refCode } = parsed.data;
 
   // Verify OTP was used for this phone
   const otp = await db.select()
@@ -229,6 +231,8 @@ auth.post('/register', async (c) => {
     name,
     role,
     district,
+    ...(transportMode ? { transportMode } : {}),
+    ...(inn ? { inn } : {}),
     referralCode: newReferralCode,
     referredBy: referrerId,
   }).returning();
@@ -316,7 +320,7 @@ auth.post('/verify-firebase', async (c) => {
 // POST /auth/register-firebase — register new user after Firebase phone verification
 auth.post('/register-firebase', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { tempToken, name, role, district, refCode } = body;
+  const { tempToken, name, role, district, transportMode, inn, refCode } = body;
 
   if (!tempToken || !name || !role || !district) {
     return c.json({ error: { code: 'VALIDATION', message: 'Missing fields' } }, 400);
@@ -348,6 +352,8 @@ auth.post('/register-firebase', async (c) => {
   const newReferralCode = nanoid(8).toUpperCase();
   const newUser = await db.insert(users).values({
     phone, name, role, district,
+    ...(transportMode ? { transportMode } : {}),
+    ...(inn ? { inn } : {}),
     referralCode: newReferralCode,
     referredBy: referrerId,
   }).returning();
