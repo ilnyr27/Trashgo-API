@@ -19,6 +19,7 @@ const updateProfileSchema = z.object({
   notifPush: z.boolean().optional(),
   notifEmail: z.boolean().optional(),
   notifEmailAddress: z.string().email().max(200).optional().nullable(),
+  fcmToken: z.string().max(300).optional().nullable(),
 });
 
 // GET /users/me
@@ -81,10 +82,11 @@ usersRouter.patch('/me', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
   }
 
-  const { addresses, notifEmailAddress, ...rest } = parsed.data;
+  const { addresses, notifEmailAddress, fcmToken, ...rest } = parsed.data;
   const dbSet: Record<string, unknown> = { ...rest };
   if (addresses !== undefined) dbSet.addresses = JSON.stringify(addresses);
   if (notifEmailAddress !== undefined) dbSet.notifEmailAddress = notifEmailAddress;
+  if (fcmToken !== undefined) dbSet.fcmToken = fcmToken;
 
   const updated = await db.update(users)
     .set(dbSet as any)

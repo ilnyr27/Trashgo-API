@@ -70,10 +70,9 @@ auth.post('/login', async (c) => {
   const useTelegram = hasTelegram();
   const useSms = hasSms();
   const useEmail = isEmailEnabled() && !!deliveryEmail;
-  const isProd = useTelegram || useSms || useEmail;
-  const code = isProd
-    ? String(Math.floor(1000 + Math.random() * 9000))
-    : '1111';
+  const forceCode = process.env.TEST_OTP_CODE;
+  const isProd = !forceCode && (useTelegram || useSms || useEmail);
+  const code = forceCode || (isProd ? String(Math.floor(1000 + Math.random() * 9000)) : '1111');
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await db.insert(otpCodes).values({ phone, code, expiresAt });
@@ -114,7 +113,7 @@ auth.post('/login', async (c) => {
       channel,
       ...(telegramBotLink ? { telegramBotLink } : {}),
       ...(deliveryEmail && channel === 'email' ? { deliveryEmail } : {}),
-      ...(channel === 'dev' ? { devCode: code } : {}),
+      ...((channel === 'dev' || !!forceCode) ? { devCode: code } : {}),
     },
   });
 });

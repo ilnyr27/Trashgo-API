@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import * as Sentry from '@sentry/node';
+if (process.env.SENTRY_DSN) {
+  Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0.1 });
+}
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -16,7 +20,8 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import { db } from './db/index.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
 import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
-import { addClient, connectedCount, emitToUser } from './ws.js';
+import { addClient, connectedCount, emitToUser, setFcmFallback } from './ws.js';
+import { sendPushNotification } from './lib/firebase-admin.js';
 
 const app = new Hono();
 
@@ -195,6 +200,7 @@ app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not fou
 // Error handler
 app.onError((err, c) => {
   console.error('Unhandled error:', err);
+  if (process.env.SENTRY_DSN) Sentry.captureException(err);
   return c.json({
     error: {
       code: 'INTERNAL_ERROR',
@@ -232,6 +238,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(30)`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS subscriptions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), customer_id UUID NOT NULL REFERENCES users(id), address TEXT NOT NULL, district VARCHAR(100) NOT NULL DEFAULT '', days TEXT NOT NULL DEFAULT '[]', time VARCHAR(8) NOT NULL DEFAULT '18:00', price INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id)`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(300)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
@@ -239,6 +246,21 @@ async function runMigrations() {
 }
 
 await runMigrations();
+
+// FCM fallback: when a user has no SSE connection, push via FCM
+setFcmFallback(async (userId, event) => {
+  try {
+    const userRow = await db.select({ fcmToken: usersTable.fcmToken }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+    const token = userRow[0]?.fcmToken;
+    if (!token) return;
+    await sendPushNotification(
+      token,
+      String(event.title ?? 'TrashGo'),
+      String(event.message ?? ''),
+      event.orderId ? { orderId: String(event.orderId) } : undefined,
+    );
+  } catch { /* FCM failure is non-fatal */ }
+});
 
 // XP helpers (mirrors orders.ts)
 const AUTO_XP_THRESHOLDS = [0, 100, 200, 400, 700, 1000];
