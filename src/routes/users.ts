@@ -155,4 +155,49 @@ usersRouter.get('/payment-history', async (c) => {
   });
 });
 
+// GET /users/contractors — list of contractors with stats (for customer "find contractors" view)
+usersRouter.get('/contractors', async (c) => {
+  const district = c.req.query('district') || null;
+
+  const rows = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      district: users.district,
+      transportMode: users.transportMode,
+      level: users.level,
+      xp: users.xp,
+      completedOrders: count(orders.id),
+      avgRating: avg(orders.ratingByCustomer),
+      ratingCount: count(orders.ratingByCustomer),
+    })
+    .from(users)
+    .leftJoin(
+      orders,
+      and(eq(orders.contractorId, users.id), eq(orders.status, 'completed'))
+    )
+    .where(
+      district
+        ? and(eq(users.role, 'contractor'), eq(users.district, district))
+        : eq(users.role, 'contractor')
+    )
+    .groupBy(users.id, users.name, users.district, users.transportMode, users.level, users.xp)
+    .orderBy(desc(count(orders.id)))
+    .limit(50);
+
+  return c.json({
+    data: rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      district: r.district,
+      transportMode: r.transportMode,
+      level: Number(r.level),
+      xp: Number(r.xp),
+      completedOrders: Number(r.completedOrders),
+      avgRating: r.avgRating ? Number(Number(r.avgRating).toFixed(1)) : null,
+      ratingCount: Number(r.ratingCount),
+    })),
+  });
+});
+
 export default usersRouter;
