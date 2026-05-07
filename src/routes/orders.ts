@@ -429,7 +429,6 @@ ordersRouter.post('/:id/confirm', async (c) => {
   });
 
   // Check achievements for both parties (fire and forget — don't block response)
-  checkOrderAchievements(order.customerId, 'customer').catch(() => {});
   checkEcoAchievements(order.customerId).catch(() => {});
   if (order.contractorId) {
     checkOrderAchievements(order.contractorId, 'contractor').catch(() => {});

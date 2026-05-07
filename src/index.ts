@@ -18,6 +18,7 @@ import achievementsRoutes from './routes/achievements.js';
 import subscriptionsRoutes from './routes/subscriptions.js';
 import leaderboardRoutes from './routes/leaderboard.js';
 import { db } from './db/index.js';
+import { calcLevel } from './lib/achievements.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
 import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
 import { addClient, connectedCount, emitToUser, setFcmFallback } from './ws.js';
@@ -239,6 +240,7 @@ async function runMigrations() {
     await db.execute(sql`CREATE TABLE IF NOT EXISTS subscriptions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), customer_id UUID NOT NULL REFERENCES users(id), address TEXT NOT NULL, district VARCHAR(100) NOT NULL DEFAULT '', days TEXT NOT NULL DEFAULT '[]', time VARCHAR(8) NOT NULL DEFAULT '18:00', price INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id)`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(300)`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn VARCHAR(12)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
@@ -262,14 +264,6 @@ setFcmFallback(async (userId, event) => {
   } catch { /* FCM failure is non-fatal */ }
 });
 
-// XP helpers (mirrors orders.ts)
-const AUTO_XP_THRESHOLDS = [0, 100, 200, 400, 700, 1000];
-function autoCalcLevel(xp: number): number {
-  for (let i = AUTO_XP_THRESHOLDS.length - 1; i >= 0; i--) {
-    if (xp >= AUTO_XP_THRESHOLDS[i]) return i + 1;
-  }
-  return 1;
-}
 
 // Auto-confirm orders stuck in pending_confirmation for > 24h (task 28)
 async function autoConfirmStaleOrders() {
@@ -282,7 +276,7 @@ async function autoConfirmStaleOrders() {
       if (order.contractorId) {
         const [ct] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.contractorId));
         const newXp = (ct?.xp ?? 0) + 10;
-        await db.update(usersTable).set({ balance: sql`balance + ${order.price}`, xp: newXp, level: autoCalcLevel(newXp) }).where(eq(usersTable.id, order.contractorId));
+        await db.update(usersTable).set({ balance: sql`balance + ${order.price}`, xp: newXp, level: calcLevel(newXp) }).where(eq(usersTable.id, order.contractorId));
         emitToUser(order.contractorId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён автоматически', message: 'Заказчик не подтвердил в течение 24ч — оплата начислена' });
       }
       const [cu] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.customerId));
