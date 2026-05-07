@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc, sql, asc, and, ne, inArray } from 'drizzle-orm';
+import { eq, desc, sql, asc, and, ne, inArray, like } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
@@ -401,32 +401,48 @@ ordersRouter.post('/:id/confirm', async (c) => {
     return c.json({ error: { code: 'INVALID_TRANSITION', message: 'Order must be pending_confirmation' } }, 400);
   }
 
-  const updated = await db.update(orders)
-    .set({ status: 'completed', updatedAt: new Date() })
-    .where(eq(orders.id, id))
-    .returning();
+  let confirmed;
+  try {
+    confirmed = await db.transaction(async (tx) => {
+      const updated = await tx.update(orders)
+        .set({ status: 'completed', updatedAt: new Date() })
+        .where(and(eq(orders.id, id), eq(orders.status, 'pending_confirmation')))
+        .returning();
 
-  if (order.contractorId) {
-    const contractor = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.contractorId)).limit(1);
-    const newXp = (contractor[0]?.xp ?? 0) + 10;
-    const newLevel = calcLevel(newXp);
-    await db.update(users)
-      .set({ balance: sql`balance + ${order.price}`, xp: newXp, level: newLevel })
-      .where(eq(users.id, order.contractorId));
+      if (updated.length === 0) {
+        throw Object.assign(new Error('RACE'), { code: 'ALREADY_CONFIRMED' });
+      }
+
+      if (order.contractorId) {
+        const contractorRow = await tx.select({ xp: users.xp }).from(users)
+          .where(eq(users.id, order.contractorId)).limit(1);
+        const newXp = (contractorRow[0]?.xp ?? 0) + 10;
+        await tx.update(users)
+          .set({ balance: sql`balance + ${order.price}`, xp: newXp, level: calcLevel(newXp) })
+          .where(eq(users.id, order.contractorId));
+      }
+
+      const customerRow = await tx.select({ xp: users.xp }).from(users)
+        .where(eq(users.id, order.customerId)).limit(1);
+      const customerNewXp = (customerRow[0]?.xp ?? 0) + 10;
+      await tx.update(users)
+        .set({ xp: customerNewXp, level: calcLevel(customerNewXp) })
+        .where(eq(users.id, order.customerId));
+
+      await tx.insert(orderHistory).values({
+        orderId: id,
+        status: 'completed',
+        note: `Confirmed by customer ${user.userId}`,
+      });
+
+      return updated[0];
+    });
+  } catch (err: any) {
+    if (err?.code === 'ALREADY_CONFIRMED') {
+      return c.json({ error: { code: 'CONFLICT', message: 'Order already confirmed' } }, 409);
+    }
+    throw err;
   }
-
-  // Award XP to customer (+10 for completed order)
-  const customer = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.customerId)).limit(1);
-  const customerNewXp = (customer[0]?.xp ?? 0) + 10;
-  await db.update(users)
-    .set({ xp: customerNewXp, level: calcLevel(customerNewXp) })
-    .where(eq(users.id, order.customerId));
-
-  await db.insert(orderHistory).values({
-    orderId: id,
-    status: 'completed',
-    note: `Confirmed by customer ${user.userId}`,
-  });
 
   // Check achievements for both parties (fire and forget — don't block response)
   checkEcoAchievements(order.customerId).catch(() => {});
@@ -482,7 +498,7 @@ ordersRouter.post('/:id/confirm', async (c) => {
     } catch { /* referral bonus failure doesn't block main flow */ }
   }
 
-  return c.json({ data: formatOrder(updated[0]) });
+  return c.json({ data: formatOrder(confirmed) });
 });
 
 // POST /orders/:id/rate — leave a rating for the other party
@@ -543,6 +559,14 @@ ordersRouter.post('/:id/dispute', async (c) => {
   const order = current[0];
   if (order.customerId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
   if (order.status !== 'pending_confirmation') return c.json({ error: { code: 'INVALID', message: 'Order must be pending_confirmation' } }, 400);
+
+  const existingDispute = await db.select({ id: orderHistory.id })
+    .from(orderHistory)
+    .where(and(eq(orderHistory.orderId, id), like(orderHistory.note, 'DISPUTE:%')))
+    .limit(1);
+  if (existingDispute.length > 0) {
+    return c.json({ error: { code: 'CONFLICT', message: 'Dispute already filed for this order' } }, 409);
+  }
 
   await db.insert(orderHistory).values({ orderId: id, status: 'pending_confirmation', note: `DISPUTE: ${reason || 'No reason'}` });
 

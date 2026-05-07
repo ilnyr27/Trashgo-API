@@ -12,6 +12,7 @@ import { sendOtp, hasSms } from '../lib/sms.js';
 import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
 import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
 import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
+import { rateLimit } from '../lib/rateLimit.js';
 
 const auth = new Hono();
 
@@ -66,6 +67,12 @@ auth.post('/login', async (c) => {
   }
 
   const { phone, deliveryEmail } = parsed.data;
+
+  const retryAfter = rateLimit(phone);
+  if (retryAfter > 0) {
+    c.header('Retry-After', String(retryAfter));
+    return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many OTP requests. Try again later.' } }, 429);
+  }
 
   const useTelegram = hasTelegram();
   const useSms = hasSms();

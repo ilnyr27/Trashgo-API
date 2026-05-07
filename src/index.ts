@@ -123,6 +123,10 @@ app.get('/api/v1/geocode', async (c) => {
 
 // Telegram Bot webhook — receives OTP link requests from users
 app.post('/api/v1/auth/telegram/webhook', async (c) => {
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (webhookSecret && c.req.header('X-Telegram-Bot-API-Secret-Token') !== webhookSecret) {
+    return c.json({ ok: false }, 401);
+  }
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ ok: true });
 
