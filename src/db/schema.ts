@@ -27,6 +27,8 @@ export const users = pgTable('users', {
   telegramChatId: varchar('telegram_chat_id', { length: 30 }),
   inn: varchar('inn', { length: 12 }),
   fcmToken: varchar('fcm_token', { length: 300 }),
+  frozen: boolean('frozen').notNull().default(false),
+  freezeReason: varchar('freeze_reason', { length: 500 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 

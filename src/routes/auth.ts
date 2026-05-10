@@ -163,6 +163,11 @@ auth.post('/verify', async (c) => {
 
   let userRow = userRows[0];
 
+  // Block frozen accounts from logging in
+  if ((userRow as any).frozen) {
+    return c.json({ error: { code: 'ACCOUNT_FROZEN', message: 'Ваш аккаунт заморожен. Обратитесь в поддержку.' } }, 403);
+  }
+
   // Update role if the user is switching roles
   if (role && role !== userRow.role) {
     await db.update(users).set({ role }).where(eq(users.id, userRow.id));

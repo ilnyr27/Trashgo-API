@@ -200,4 +200,36 @@ usersRouter.get('/contractors', async (c) => {
   });
 });
 
+// GET /users/admin/frozen — developer-only list of frozen customer accounts
+// Protected by ADMIN_SECRET env var (pass as ?secret=xxx or Authorization: Bearer xxx)
+usersRouter.get('/admin/frozen', async (c) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+  const provided = c.req.query('secret') || c.req.header('Authorization')?.replace('Bearer ', '');
+  if (adminSecret && provided !== adminSecret) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
+  }
+
+  const frozen = await db.select({
+    id: users.id,
+    phone: users.phone,
+    name: users.name,
+    freezeReason: users.freezeReason,
+    createdAt: users.createdAt,
+  }).from(users).where(eq(users.frozen, true)).orderBy(desc(users.createdAt));
+
+  return c.json({ data: frozen });
+});
+
+// POST /users/admin/unfreeze/:id — unfreeze a customer account
+usersRouter.post('/admin/unfreeze/:id', async (c) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+  const provided = c.req.query('secret') || c.req.header('Authorization')?.replace('Bearer ', '');
+  if (adminSecret && provided !== adminSecret) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
+  }
+  const id = c.req.param('id');
+  await db.update(users).set({ frozen: false, freezeReason: null } as any).where(eq(users.id, id));
+  return c.json({ data: { ok: true } });
+});
+
 export default usersRouter;

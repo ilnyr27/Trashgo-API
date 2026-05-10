@@ -592,6 +592,40 @@ ordersRouter.post('/:id/dispute', async (c) => {
   return c.json({ data: { ok: true } });
 });
 
+// POST /orders/:id/payment-dispute — contractor claims they didn't receive payment
+// Freezes the customer account and logs for admin review
+ordersRouter.post('/:id/payment-dispute', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  if (current.length === 0) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
+  const order = current[0];
+
+  if (order.contractorId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  if (order.status !== 'completed') return c.json({ error: { code: 'INVALID', message: 'Order must be completed' } }, 400);
+
+  const existing = await db.select({ id: orderHistory.id })
+    .from(orderHistory)
+    .where(and(eq(orderHistory.orderId, id), like(orderHistory.note, 'PAYMENT_DISPUTE:%')))
+    .limit(1);
+  if (existing.length > 0) return c.json({ error: { code: 'CONFLICT', message: 'Payment dispute already filed' } }, 409);
+
+  await db.insert(orderHistory).values({
+    orderId: id,
+    status: 'completed',
+    note: `PAYMENT_DISPUTE: contractor ${user.userId} claims non-payment`,
+  });
+
+  await db.update(users)
+    .set({ frozen: true, freezeReason: `Payment dispute on order ${id} — contractor reported non-payment` } as any)
+    .where(eq(users.id, order.customerId));
+
+  emitToUser(user.userId, { type: 'order_status', orderId: id, title: 'Спор принят', message: 'Аккаунт заказчика заморожен до выяснения обстоятельств' });
+
+  return c.json({ data: { ok: true } });
+});
+
 // Helper
 function formatOrder(o: typeof orders.$inferSelect) {
   let photoUrls: string[] = [];
