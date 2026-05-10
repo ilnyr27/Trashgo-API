@@ -17,6 +17,20 @@ const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 // All routes require auth
 ordersRouter.use('*', authMiddleware);
 
+// Strip HTML tags to prevent XSS stored in DB (F3)
+function stripHtml(s: string): string {
+  return s.replace(/<[^>]*>/g, '').trim();
+}
+
+// Validate photo: https:// URL or base64 data image ≤5MB decoded (F2)
+const photoUrlSchema = z.string().refine((s) => {
+  if (s.startsWith('https://')) return true;
+  const m = s.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/);
+  if (!m) return false;
+  // base64 length → decoded bytes ≈ len * 3/4
+  return m[2].length * 0.75 <= 5 * 1024 * 1024;
+}, { message: 'Photo must be an https:// URL or base64 image ≤5MB (jpeg/png/webp/gif)' });
+
 // Validation
 const createOrderSchema = z.object({
   address: z.string().min(1).max(500),
@@ -26,7 +40,7 @@ const createOrderSchema = z.object({
   description: z.string().max(1000).default(''),
   scheduledAt: z.string().datetime().optional(),
   asap: z.boolean().default(false),
-  photoUrls: z.array(z.string()).max(5).default([]),
+  photoUrls: z.array(photoUrlSchema).max(5).default([]),
 });
 
 const updateStatusSchema = z.object({
@@ -34,7 +48,7 @@ const updateStatusSchema = z.object({
 });
 
 const completeOrderSchema = z.object({
-  completionPhotoUrls: z.array(z.string()).max(5).default([]),
+  completionPhotoUrls: z.array(photoUrlSchema).max(5).default([]),
 });
 
 // GET /orders — list my orders
@@ -213,7 +227,7 @@ ordersRouter.patch('/:id', async (c) => {
     description: z.string().max(1000).optional(),
     scheduledAt: z.string().datetime().optional().nullable(),
     asap: z.boolean().optional(),
-    photoUrls: z.array(z.string()).max(5).optional(),
+    photoUrls: z.array(photoUrlSchema).max(5).optional(),
   });
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
@@ -224,7 +238,7 @@ ordersRouter.patch('/:id', async (c) => {
     ...(d.district !== undefined && { district: d.district }),
     ...(d.volume !== undefined && { volume: d.volume }),
     ...(d.price !== undefined && { price: d.price }),
-    ...(d.description !== undefined && { description: d.description }),
+    ...(d.description !== undefined && { description: stripHtml(d.description) }),
     ...(d.photoUrls !== undefined && { photoUrls: JSON.stringify(d.photoUrls) }),
     ...(d.asap !== undefined && { asap: d.asap }),
     ...((d.asap === true) && { scheduledAt: null }),
@@ -251,7 +265,7 @@ ordersRouter.post('/', async (c) => {
     district: parsed.data.district,
     volume: parsed.data.volume,
     price: parsed.data.price,
-    description: parsed.data.description,
+    description: stripHtml(parsed.data.description),
     photoUrls: JSON.stringify(parsed.data.photoUrls),
     asap: parsed.data.asap,
     scheduledAt: parsed.data.asap ? null : new Date(parsed.data.scheduledAt!),
