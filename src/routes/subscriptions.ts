@@ -13,6 +13,7 @@ const SubSchema = z.object({
   district: z.string().max(100).default(''),
   days: z.array(z.number().int().min(1).max(7)).min(1),
   time: z.string().regex(/^\d{2}:\d{2}$/).default('18:00'),
+  volume: z.number().int().min(1).max(30).default(1),
   price: z.number().int().min(1),
   description: z.string().max(500).default(''),
 });
@@ -52,6 +53,7 @@ router.patch('/:id', async (c) => {
   if (rest.address !== undefined) setData.address = rest.address;
   if (rest.district !== undefined) setData.district = rest.district;
   if (rest.time !== undefined) setData.time = rest.time;
+  if (rest.volume !== undefined) setData.volume = rest.volume;
   if (rest.price !== undefined) setData.price = rest.price;
   if (rest.description !== undefined) setData.description = rest.description;
   if (rest.active !== undefined) setData.active = rest.active;

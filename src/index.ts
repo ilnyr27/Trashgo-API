@@ -23,6 +23,7 @@ import { sql, and, eq, lt } from 'drizzle-orm';
 import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
 import { addClient, connectedCount, emitToUser, setFcmFallback } from './ws.js';
 import { sendPushNotification } from './lib/firebase-admin.js';
+import { startSubscriptionCron } from './lib/subscriptionCron.js';
 
 const app = new Hono();
 
@@ -247,6 +248,8 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn VARCHAR(12)`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS frozen BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS freeze_reason VARCHAR(500)`);
+    await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 1`);
+    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id)`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
@@ -295,6 +298,9 @@ async function autoConfirmStaleOrders() {
   } catch (e: any) { console.error('[AUTO-CONFIRM]', e.message); }
 }
 setInterval(autoConfirmStaleOrders, 5 * 60 * 1000);
+
+// Subscription cron — creates orders from active subscriptions every day at 06:00 Moscow time
+startSubscriptionCron();
 
 // Start server
 const port = parseInt(process.env.PORT || '3000');

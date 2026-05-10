@@ -42,11 +42,29 @@ export const otpCodes = pgTable('otp_codes', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Subscriptions (recurring pickup schedules) — declared before orders so orders can reference it
+export const subscriptions = pgTable('subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  customerId: uuid('customer_id').notNull().references(() => users.id),
+  address: text('address').notNull(),
+  district: varchar('district', { length: 100 }).notNull().default(''),
+  days: text('days').notNull().default('[]'),  // JSON array of weekday numbers [1..7], 1=Mon
+  time: varchar('time', { length: 8 }).notNull().default('18:00'),
+  volume: integer('volume').notNull().default(1),
+  price: integer('price').notNull(),
+  description: text('description').notNull().default(''),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('idx_subscriptions_customer').on(table.customerId),
+]);
+
 // Orders
 export const orders = pgTable('orders', {
   id: uuid('id').primaryKey().defaultRandom(),
   customerId: uuid('customer_id').notNull().references(() => users.id),
   contractorId: uuid('contractor_id').references(() => users.id),
+  subscriptionId: uuid('subscription_id').references(() => subscriptions.id),
   address: text('address').notNull(),
   district: varchar('district', { length: 100 }).notNull(),
   status: orderStatusEnum('status').notNull().default('new'),
@@ -108,22 +126,6 @@ export const userAchievements = pgTable('user_achievements', {
   unlockedAt: timestamp('unlocked_at').notNull().defaultNow(),
 }, (table) => [
   index('idx_user_achievements_user').on(table.userId),
-]);
-
-// Subscriptions (recurring pickup schedules)
-export const subscriptions = pgTable('subscriptions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  customerId: uuid('customer_id').notNull().references(() => users.id),
-  address: text('address').notNull(),
-  district: varchar('district', { length: 100 }).notNull().default(''),
-  days: text('days').notNull().default('[]'),  // JSON-serialized array of weekday numbers [1..7]
-  time: varchar('time', { length: 8 }).notNull().default('18:00'),
-  price: integer('price').notNull(),
-  description: text('description').notNull().default(''),
-  active: boolean('active').notNull().default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-}, (table) => [
-  index('idx_subscriptions_customer').on(table.customerId),
 ]);
 
 // Refresh tokens
