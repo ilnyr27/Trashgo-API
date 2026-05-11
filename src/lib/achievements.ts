@@ -2,6 +2,7 @@ import { eq, and, count as drizzleCount } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, referrals, userAchievements, users } from '../db/schema.js';
 import { sql } from 'drizzle-orm';
+import { emitToUser } from '../ws.js';
 
 export interface AchievementDef {
   id: string;
@@ -112,6 +113,16 @@ async function unlockAchievement(userId: string, def: AchievementDef): Promise<b
     const newXp = u.xp + def.xp;
     await db.update(users).set({ xp: newXp, level: calcLevel(newXp) }).where(eq(users.id, userId));
   }
+
+  emitToUser(userId, {
+    type: 'achievement_unlocked',
+    id: def.id,
+    title: def.title,
+    icon: def.icon,
+    xp: def.xp,
+    message: `+${def.xp} XP`,
+  });
+
   return true;
 }
 
