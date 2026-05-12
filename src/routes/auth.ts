@@ -48,12 +48,12 @@ function generateTokens(userId: string, role: 'customer' | 'contractor') {
   const token = jwt.sign(
     { userId, role },
     process.env.JWT_SECRET!,
-    { expiresIn: '15m' }
+    { expiresIn: '7d' }
   );
   const refreshToken = jwt.sign(
     { userId, role, type: 'refresh' },
     process.env.JWT_REFRESH_SECRET!,
-    { expiresIn: '30d' }
+    { expiresIn: '90d' }
   );
   return { token, refreshToken };
 }

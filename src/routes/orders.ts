@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, desc, sql, asc, and, ne, inArray, like, lt } from 'drizzle-orm';
+import { eq, desc, sql, asc, and, ne, inArray, like, lt, isNotNull, avg, count } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { orders, orderHistory, users, messages, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
@@ -152,19 +152,63 @@ ordersRouter.get('/:id', async (c) => {
   const row = result[0];
   let contractorPhone = '';
   let contractorName = '';
+  let contractorAvgRating: number | null = null;
+  let contractorRatingCount = 0;
+  let contractorCompletedOrders = 0;
+  let customerAvgRating: number | null = null;
+  let customerRatingCount = 0;
+  let customerCompletedOrders = 0;
+  let acceptedAt: string | null = null;
+
+  // Contractor profile
   if (row.order.contractorId) {
-    const contractor = await db.select({ name: users.name, phone: users.phone })
+    const [contractor] = await db.select({ name: users.name, phone: users.phone })
       .from(users).where(eq(users.id, row.order.contractorId)).limit(1);
-    contractorPhone = contractor[0]?.phone ?? '';
-    contractorName = contractor[0]?.name ?? '';
+    contractorPhone = contractor?.phone ?? '';
+    contractorName = contractor?.name ?? '';
+
+    const [cRating] = await db.select({ avg: avg(orders.ratingByCustomer), cnt: count(orders.ratingByCustomer) })
+      .from(orders).where(and(eq(orders.contractorId, row.order.contractorId), isNotNull(orders.ratingByCustomer)));
+    contractorAvgRating = cRating?.avg ? parseFloat(cRating.avg) : null;
+    contractorRatingCount = Number(cRating?.cnt ?? 0);
+
+    const [ccRow] = await db.select({ cnt: sql<number>`count(*)::int` })
+      .from(orders).where(and(eq(orders.contractorId, row.order.contractorId), eq(orders.status, 'completed')));
+    contractorCompletedOrders = Number(ccRow?.cnt ?? 0);
+  }
+
+  // Customer profile
+  const [cuRating] = await db.select({ avg: avg(orders.ratingByContractor), cnt: count(orders.ratingByContractor) })
+    .from(orders).where(and(eq(orders.customerId, row.order.customerId), isNotNull(orders.ratingByContractor)));
+  customerAvgRating = cuRating?.avg ? parseFloat(cuRating.avg) : null;
+  customerRatingCount = Number(cuRating?.cnt ?? 0);
+
+  const [custRow] = await db.select({ cnt: sql<number>`count(*)::int` })
+    .from(orders).where(and(eq(orders.customerId, row.order.customerId), eq(orders.status, 'completed')));
+  customerCompletedOrders = Number(custRow?.cnt ?? 0);
+
+  // acceptedAt: used for 10-min customer cancel window
+  if (row.order.status !== 'new') {
+    const [hist] = await db.select({ createdAt: orderHistory.createdAt })
+      .from(orderHistory)
+      .where(and(eq(orderHistory.orderId, id), eq(orderHistory.status, 'accepted')))
+      .limit(1);
+    if (hist) acceptedAt = hist.createdAt.toISOString();
   }
 
   return c.json({ data: {
     ...formatOrder(row.order),
     customerName: row.customerName ?? '',
     customerPhone: row.customerPhone ?? '',
+    customerAvgRating,
+    customerRatingCount,
+    customerCompletedOrders,
     contractorPhone,
     contractorName,
+    contractorAvgRating,
+    contractorRatingCount,
+    contractorCompletedOrders,
+    acceptedAt,
   } });
 });
 
@@ -339,6 +383,20 @@ ordersRouter.patch('/:id/status', async (c) => {
     return c.json({
       error: { code: 'INVALID_TRANSITION', message: `Cannot transition from ${order.status} to ${status}` },
     }, 400);
+  }
+
+  // Customer can only cancel an accepted order within 10 minutes of acceptance
+  if (status === 'cancelled' && order.status === 'accepted' && order.customerId === user.userId) {
+    const [hist] = await db.select({ createdAt: orderHistory.createdAt })
+      .from(orderHistory)
+      .where(and(eq(orderHistory.orderId, id), eq(orderHistory.status, 'accepted')))
+      .limit(1);
+    if (hist) {
+      const minutesSince = (Date.now() - hist.createdAt.getTime()) / 60000;
+      if (minutesSince > 10) {
+        return c.json({ error: { code: 'CANCEL_WINDOW_EXPIRED', message: 'Отменить исполнителя можно только в течение 10 минут после принятия заказа' } }, 400);
+      }
+    }
   }
 
   const updates: Record<string, unknown> = {
