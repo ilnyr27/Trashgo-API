@@ -21,7 +21,7 @@ import adminRoutes from './routes/admin.js';
 import { db } from './db/index.js';
 import { calcLevel, checkOrderAchievements, checkVolumeAchievements, checkDistrictAchievements, checkTimeAchievements, checkAsapAchievements, checkEcoAchievements, checkVehicleAchievements, checkTenureAchievements } from './lib/achievements.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
-import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable } from './db/schema.js';
+import { orders as ordersTable, users as usersTable, orderHistory as orderHistoryTable, otpCodes as otpCodesTable } from './db/schema.js';
 import { addClient, connectedCount, emitToUser, setFcmFallback } from './ws.js';
 import { sendPushNotification } from './lib/firebase-admin.js';
 import { startSubscriptionCron } from './lib/subscriptionCron.js';
@@ -128,8 +128,13 @@ app.get('/api/v1/geocode', async (c) => {
 // Telegram Bot webhook — receives OTP link requests from users
 app.post('/api/v1/auth/telegram/webhook', async (c) => {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (webhookSecret && c.req.header('X-Telegram-Bot-API-Secret-Token') !== webhookSecret) {
-    return c.json({ ok: false }, 401);
+  if (webhookSecret) {
+    if (c.req.header('X-Telegram-Bot-API-Secret-Token') !== webhookSecret) {
+      return c.json({ ok: false }, 401);
+    }
+  } else if (process.env.TELEGRAM_BOT_TOKEN) {
+    // Telegram active but no secret — warn on every request so it shows in logs
+    console.warn('[SECURITY] TELEGRAM_WEBHOOK_SECRET not set — anyone can spoof Telegram messages. Set it in Railway.');
   }
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ ok: true });
@@ -337,6 +342,16 @@ setInterval(autoConfirmStaleOrders, 5 * 60 * 1000);
 
 // Subscription cron — creates orders from active subscriptions every day at 06:00 Moscow time
 startSubscriptionCron();
+
+// OTP cleanup — delete codes older than 24h once per day (prevents table bloat)
+async function cleanupExpiredOtps() {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await db.delete(otpCodesTable).where(lt(otpCodesTable.expiresAt, cutoff));
+  } catch (e: any) { console.error('[OTP-CLEANUP]', e.message); }
+}
+setInterval(cleanupExpiredOtps, 24 * 60 * 60 * 1000);
+setTimeout(cleanupExpiredOtps, 15_000); // also run shortly after startup
 
 // Start server
 const port = parseInt(process.env.PORT || '3000');

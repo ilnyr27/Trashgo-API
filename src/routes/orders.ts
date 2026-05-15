@@ -639,23 +639,35 @@ ordersRouter.post('/:id/confirm', async (c) => {
             .where(and(eq(orders.contractorId, order.contractorId), eq(orders.status, 'completed')));
           const refeeOrderCount = Number(countRow?.cnt ?? 0);
 
-          // Award 150₽ bonus after referee's 5th completed order
+          // Award 150₽ bonus after referee's 5th completed order.
+          // Atomic UPDATE WHERE bonus_150_paid = false prevents double-payment on concurrent requests.
           if (!ref.bonus150Paid && refeeOrderCount >= 5) {
-            await db.update(users).set({ balance: sql`balance + 150` }).where(eq(users.id, referrerId));
-            await db.update(referrals).set({ bonus150Paid: true }).where(eq(referrals.id, ref.id));
-            emitToUser(referrerId, { type: 'order_status', orderId: id, title: '💰 Бонус за напарника!', message: 'Ваш напарник выполнил 5 заказов — вам начислено +150₽' });
+            const claimed = await db.update(referrals)
+              .set({ bonus150Paid: true })
+              .where(and(eq(referrals.id, ref.id), eq(referrals.bonus150Paid, false)))
+              .returning({ id: referrals.id });
+            if (claimed.length > 0) {
+              await db.update(users).set({ balance: sql`balance + 150` }).where(eq(users.id, referrerId));
+              emitToUser(referrerId, { type: 'order_status', orderId: id, title: '💰 Бонус за напарника!', message: 'Ваш напарник выполнил 5 заказов — вам начислено +150₽' });
+            }
           }
 
-          // 5% bonus during referee's first 30 days, cap 500₽/month
+          // 5% bonus during referee's first 30 days, cap 500₽/month.
+          // Atomic: increment bonusMonthlyUsed only if cap not yet reached.
           if (ref.bonusExpiresAt && new Date() < ref.bonusExpiresAt) {
             const cap = 500;
             const bonus5pct = Math.floor(order.price * 0.05);
             const alreadyUsed = ref.bonusMonthlyUsed ?? 0;
             const canAward = Math.min(bonus5pct, cap - alreadyUsed);
             if (canAward > 0) {
-              await db.update(users).set({ balance: sql`balance + ${canAward}` }).where(eq(users.id, referrerId));
-              await db.update(referrals).set({ bonusMonthlyUsed: alreadyUsed + canAward }).where(eq(referrals.id, ref.id));
-              emitToUser(referrerId, { type: 'order_status', orderId: id, title: `💰 +${canAward}₽ бонус`, message: `5% от заказа напарника (${order.price}₽)` });
+              const awarded = await db.update(referrals)
+                .set({ bonusMonthlyUsed: sql`LEAST(bonus_monthly_used + ${canAward}, ${cap})` })
+                .where(and(eq(referrals.id, ref.id), sql`bonus_monthly_used < ${cap}`))
+                .returning({ bonusMonthlyUsed: referrals.bonusMonthlyUsed });
+              if (awarded.length > 0) {
+                await db.update(users).set({ balance: sql`balance + ${canAward}` }).where(eq(users.id, referrerId));
+                emitToUser(referrerId, { type: 'order_status', orderId: id, title: `💰 +${canAward}₽ бонус`, message: `5% от заказа напарника (${order.price}₽)` });
+              }
             }
           }
         }

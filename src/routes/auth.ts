@@ -29,6 +29,16 @@ const verifySchema = z.object({
   role: z.enum(['customer', 'contractor']).optional(),
 });
 
+function validateInn12(inn: string): boolean {
+  if (!/^\d{12}$/.test(inn)) return false;
+  const d = inn.split('').map(Number);
+  const w1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8];
+  const w2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8];
+  const c1 = w1.reduce((s, w, i) => s + w * d[i], 0) % 11 % 10;
+  const c2 = w2.reduce((s, w, i) => s + w * d[i], 0) % 11 % 10;
+  return c1 === d[10] && c2 === d[11];
+}
+
 const registerSchema = z.object({
   phone: z.string().min(10).max(20),
   code: z.string().length(4),
@@ -36,7 +46,7 @@ const registerSchema = z.object({
   role: z.enum(['customer', 'contractor']),
   district: z.string().min(1).max(100),
   transportMode: z.string().optional(),
-  inn: z.string().regex(/^\d{12}$/).optional().or(z.literal('')),
+  inn: z.string().regex(/^\d{12}$/).refine(validateInn12, { message: 'Неверный ИНН (неправильная контрольная сумма)' }).optional().or(z.literal('')),
   refCode: z.string().optional(),
 });
 
@@ -142,6 +152,13 @@ auth.post('/verify', async (c) => {
   }
 
   const { phone, code, role } = parsed.data;
+
+  // Brute-force protection: max 5 wrong attempts per phone per 10 minutes
+  const verifyRetryAfter = rateLimit(`verify:${phone}`, 5, 10 * 60 * 1000);
+  if (verifyRetryAfter > 0) {
+    c.header('Retry-After', String(verifyRetryAfter));
+    return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
+  }
 
   // Find valid OTP
   const otp = await db.select()
