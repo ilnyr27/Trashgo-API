@@ -3,7 +3,7 @@ import { z } from 'zod';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
-import { eq, and, gt } from 'drizzle-orm';
+import { eq, and, gt, desc } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, otpCodes, refreshTokens, referrals } from '../db/schema.js';
 import { checkReferralAchievements } from '../lib/achievements.js';
@@ -460,6 +460,53 @@ auth.post('/refresh', async (c) => {
   } catch {
     return c.json({ error: { code: 'INVALID_TOKEN', message: 'Invalid refresh token' } }, 401);
   }
+});
+
+// POST /auth/request-telegram — generate Telegram bot link as SMS fallback
+// Returns a deep link so the user can get their OTP via the bot instead of SMS
+auth.post('/request-telegram', async (c) => {
+  if (!hasTelegram()) {
+    return c.json({ error: { code: 'NOT_CONFIGURED', message: 'Telegram bot not configured' } }, 503);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const phone = String(body?.phone ?? '').trim();
+  if (!phone) {
+    return c.json({ error: { code: 'VALIDATION', message: 'Phone required' } }, 400);
+  }
+
+  const retryAfter = rateLimit(`tg:${phone}`, 3, 5 * 60 * 1000);
+  if (retryAfter > 0) {
+    c.header('Retry-After', String(retryAfter));
+    return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many requests' } }, 429);
+  }
+
+  // Reuse existing valid OTP or create new one
+  const existing = await db.select()
+    .from(otpCodes)
+    .where(and(eq(otpCodes.phone, phone), eq(otpCodes.used, 0), gt(otpCodes.expiresAt, new Date())))
+    .orderBy(desc(otpCodes.createdAt))
+    .limit(1);
+
+  let code: string;
+  if (existing.length > 0) {
+    code = existing[0].code;
+  } else {
+    code = String(Math.floor(1000 + Math.random() * 9000));
+    await db.insert(otpCodes).values({ phone, code, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+  }
+
+  const botUsername = await getBotUsername();
+  if (!botUsername) {
+    return c.json({ error: { code: 'BOT_UNAVAILABLE', message: 'Telegram bot unavailable' } }, 503);
+  }
+
+  cleanupTelegramTokens();
+  const startToken = nanoid(8);
+  telegramTokens.set(startToken, { phone, code, exp: Date.now() + 10 * 60 * 1000 });
+  const telegramBotLink = `https://t.me/${botUsername}?start=${startToken}`;
+
+  return c.json({ data: { telegramBotLink } });
 });
 
 export default auth;

@@ -279,6 +279,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS freeze_reason VARCHAR(500)`);
     await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 1`);
     await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id)`);
+    await db.execute(sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_payment' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_payment'; END IF; END $$`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
@@ -305,26 +306,42 @@ setFcmFallback(async (userId, event) => {
 });
 
 
-// Auto-confirm orders stuck in pending_confirmation for > 24h (task 28)
+// Auto-confirm orders stuck in pending_confirmation for > 24h (customer didn't confirm work)
+// Auto-complete orders stuck in pending_payment for > 48h (contractor didn't confirm payment)
 async function autoConfirmStaleOrders() {
   try {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const stale = await db.select().from(ordersTable)
-      .where(and(eq(ordersTable.status, 'pending_confirmation'), lt(ordersTable.updatedAt, cutoff)));
-    for (const order of stale) {
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    // Phase 1: customer hasn't confirmed work → auto-advance to pending_payment
+    const staleConfirmation = await db.select().from(ordersTable)
+      .where(and(eq(ordersTable.status, 'pending_confirmation'), lt(ordersTable.updatedAt, cutoff24h)));
+    for (const order of staleConfirmation) {
+      await db.update(ordersTable).set({ status: 'pending_payment', updatedAt: new Date() }).where(eq(ordersTable.id, order.id));
+      await db.insert(orderHistoryTable).values({ orderId: order.id, status: 'pending_payment', note: 'Auto-advanced: customer did not confirm in 24h' });
+      if (order.contractorId) {
+        emitToUser(order.contractorId, { type: 'order_status', orderId: order.id, title: 'Автоподтверждение', message: 'Заказчик не ответил — ожидайте СБП оплату и нажмите «Деньги получены»' });
+      }
+      emitToUser(order.customerId, { type: 'order_status', orderId: order.id, title: 'Работа подтверждена', message: 'Оплатите исполнителю через СБП и дождитесь завершения' });
+      console.log(`[AUTO-ADVANCE pending_payment] ${order.id}`);
+    }
+
+    // Phase 2: contractor hasn't confirmed payment receipt → auto-complete
+    const stalePayment = await db.select().from(ordersTable)
+      .where(and(eq(ordersTable.status, 'pending_payment'), lt(ordersTable.updatedAt, cutoff48h)));
+    for (const order of stalePayment) {
       await db.update(ordersTable).set({ status: 'completed', updatedAt: new Date() }).where(eq(ordersTable.id, order.id));
       if (order.contractorId) {
         const [ct] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.contractorId));
         const newXp = (ct?.xp ?? 0) + 10;
         await db.update(usersTable).set({ balance: sql`balance + ${order.price}`, xp: newXp, level: calcLevel(newXp) }).where(eq(usersTable.id, order.contractorId));
-        emitToUser(order.contractorId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён автоматически', message: 'Заказчик не подтвердил в течение 24ч — оплата начислена' });
+        emitToUser(order.contractorId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён автоматически', message: 'Исполнитель не подтвердил оплату в течение 48ч — оплата начислена' });
       }
       const [cu] = await db.select({ xp: usersTable.xp }).from(usersTable).where(eq(usersTable.id, order.customerId));
       const cuXp = (cu?.xp ?? 0) + 10;
       await db.update(usersTable).set({ xp: cuXp, level: calcLevel(cuXp) }).where(eq(usersTable.id, order.customerId));
-      emitToUser(order.customerId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён', message: 'Автоматически подтверждён через 24 часа' });
-      await db.insert(orderHistoryTable).values({ orderId: order.id, status: 'completed', note: 'Auto-confirmed: 24h timeout' });
-      // Achievement checks (same as manual confirm, fire-and-forget)
+      emitToUser(order.customerId, { type: 'order_status', orderId: order.id, title: 'Заказ завершён', message: 'Автоматически завершён через 48 часов' });
+      await db.insert(orderHistoryTable).values({ orderId: order.id, status: 'completed', note: 'Auto-completed: payment not confirmed in 48h' });
       checkEcoAchievements(order.customerId).catch(() => {});
       if (order.contractorId) {
         checkOrderAchievements(order.contractorId, 'contractor').catch(() => {});
@@ -335,7 +352,7 @@ async function autoConfirmStaleOrders() {
         checkTenureAchievements(order.contractorId).catch(() => {});
         if (order.asap) checkAsapAchievements(order.contractorId).catch(() => {});
       }
-      console.log(`[AUTO-CONFIRM] ${order.id}`);
+      console.log(`[AUTO-COMPLETE] ${order.id}`);
     }
   } catch (e: any) { console.error('[AUTO-CONFIRM]', e.message); }
 }
