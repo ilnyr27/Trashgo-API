@@ -26,6 +26,7 @@ import { addClient, connectedCount, emitToUser, setFcmFallback } from './ws.js';
 import { sendPushNotification } from './lib/firebase-admin.js';
 import { startSubscriptionCron } from './lib/subscriptionCron.js';
 import { hasTelegram, sendTelegramNotification, getBotUsername } from './lib/telegram.js';
+import { notifyUser } from './lib/notify.js';
 import { normalizePhone } from './lib/phone.js';
 
 const app = new Hono();
@@ -154,12 +155,16 @@ app.post('/api/v1/auth/telegram/webhook', async (c) => {
     telegramTokens.delete(startPayload);
     const { users: usersTable } = await import('./db/schema.js');
     const { eq } = await import('drizzle-orm');
-    const rows = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, tokenEntry.phone)).limit(1);
+    const rows = await db.select({ id: usersTable.id, telegramChatId: usersTable.telegramChatId }).from(usersTable).where(eq(usersTable.phone, tokenEntry.phone)).limit(1);
+    const isNewLink = rows.length > 0 && !rows[0].telegramChatId;
     if (rows.length > 0) {
       await db.update(usersTable).set({ telegramChatId: chatId } as any).where(eq(usersTable.id, rows[0].id));
     }
     const { sendTelegramOtp } = await import('./lib/telegram.js');
     await sendTelegramOtp(chatId, tokenEntry.code);
+    if (isNewLink) {
+      await sendTelegramMessage(chatId, '✅ Telegram привязан к вашему аккаунту TrashGo.\n\nТеперь вы будете получать уведомления о заказах прямо сюда — даже когда приложение закрыто.');
+    }
     return c.json({ ok: true });
   }
 
@@ -280,6 +285,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 1`);
     await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id)`);
     await db.execute(sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_payment' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_payment'; END IF; END $$`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);
@@ -306,12 +312,22 @@ setFcmFallback(async (userId, event) => {
 });
 
 
-// Auto-confirm orders stuck in pending_confirmation for > 24h (customer didn't confirm work)
-// Auto-complete orders stuck in pending_payment for > 48h (contractor didn't confirm payment)
+// Cron: auto-cancel/confirm/complete stale orders
 async function autoConfirmStaleOrders() {
   try {
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    // Phase 0: no contractor accepted new order in 24h → auto-cancel
+    const staleNew = await db.select().from(ordersTable)
+      .where(and(eq(ordersTable.status, 'new'), lt(ordersTable.createdAt, cutoff24h)));
+    for (const order of staleNew) {
+      await db.update(ordersTable).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(ordersTable.id, order.id));
+      await db.insert(orderHistoryTable).values({ orderId: order.id, status: 'cancelled', note: 'Auto-cancelled: no contractor accepted in 24h' });
+      emitToUser(order.customerId, { type: 'order_status', orderId: order.id, title: '❌ Заказ отменён', message: 'Никто не принял заказ в течение 24 часов — создайте новый' });
+      notifyUser(order.customerId, '❌ Заказ не принят', `Заказ #${order.id.slice(0, 8)} отменён — никто не принял за 24 часа. Попробуйте создать новый.`);
+      console.log(`[AUTO-CANCEL new] ${order.id}`);
+    }
 
     // Phase 1: customer hasn't confirmed work → auto-advance to pending_payment
     const staleConfirmation = await db.select().from(ordersTable)

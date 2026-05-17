@@ -20,6 +20,7 @@ const updateProfileSchema = z.object({
   notifEmail: z.boolean().optional(),
   notifEmailAddress: z.string().email().max(200).optional().nullable(),
   fcmToken: z.string().max(300).optional().nullable(),
+  isAvailable: z.boolean().optional(),
 });
 
 // GET /users/me
@@ -68,6 +69,7 @@ usersRouter.get('/me', async (c) => {
       notifEmail: u.notifEmail ?? false,
       notifEmailAddress: u.notifEmailAddress ?? null,
       telegramLinked: !!u.telegramChatId,
+      isAvailable: u.isAvailable ?? true,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -117,6 +119,7 @@ usersRouter.patch('/me', async (c) => {
       notifPush: u.notifPush ?? true,
       notifEmail: u.notifEmail ?? false,
       notifEmailAddress: u.notifEmailAddress ?? null,
+      isAvailable: u.isAvailable ?? true,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -179,8 +182,8 @@ usersRouter.get('/contractors', async (c) => {
     )
     .where(
       district
-        ? and(eq(users.role, 'contractor'), eq(users.district, district))
-        : eq(users.role, 'contractor')
+        ? and(eq(users.role, 'contractor'), eq(users.district, district), eq(users.isAvailable, true))
+        : and(eq(users.role, 'contractor'), eq(users.isAvailable, true))
     )
     .groupBy(users.id, users.name, users.district, users.transportMode, users.level, users.xp)
     .orderBy(desc(count(orders.id)))

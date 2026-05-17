@@ -15,28 +15,9 @@ import {
 import {
   sendOrderAcceptedEmail, sendOrderCompletedEmail, sendOrderConfirmedEmail, sendOrderCancelledEmail,
 } from '../lib/email.js';
-import { sendPushNotification } from '../lib/firebase-admin.js';
-import { sendTelegramNotification } from '../lib/telegram.js';
+import { notifyUser } from '../lib/notify.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
-
-// Fire-and-forget: send FCM push + Telegram to a user
-function notifyUser(userId: string, title: string, body: string, orderId?: string): void {
-  db.select({ fcmToken: users.fcmToken, telegramChatId: users.telegramChatId, notifPush: users.notifPush })
-    .from(users).where(eq(users.id, userId)).limit(1)
-    .then(([u]) => {
-      if (!u) return;
-      if (u.notifPush && u.fcmToken) {
-        sendPushNotification(u.fcmToken, title, body, orderId ? { orderId } : {})
-          .then((ok) => {
-            if (!ok) db.update(users).set({ fcmToken: null } as any).where(eq(users.id, userId)).catch(() => {});
-          }).catch(() => {});
-      }
-      if (u.telegramChatId) {
-        sendTelegramNotification(u.telegramChatId, title, body).catch(() => {});
-      }
-    }).catch(() => {});
-}
 
 // All routes require auth
 ordersRouter.use('*', authMiddleware);
@@ -373,6 +354,24 @@ ordersRouter.post('/', async (c) => {
   });
 
   checkCustomerOrderAchievements(user.userId).catch(() => {});
+
+  // Notify available contractors in the same district
+  const newOrderId = newOrder[0].id;
+  const notifTitle = `🗑 Новый заказ в районе ${parsed.data.district}`;
+  const notifBody = `${parsed.data.volume} м³ · ${parsed.data.price}₽ · ${parsed.data.address}`;
+  db.select({ id: users.id })
+    .from(users)
+    .where(and(
+      eq(users.role, 'contractor'),
+      eq(users.district, parsed.data.district),
+      eq(users.frozen, false),
+      eq(users.isAvailable, true),
+      ne(users.id, user.userId),
+    ))
+    .limit(50)
+    .then((contractors) => {
+      for (const ct of contractors) notifyUser(ct.id, notifTitle, notifBody, newOrderId);
+    }).catch(() => {});
 
   return c.json({ data: formatOrder(newOrder[0]) }, 201);
 });
