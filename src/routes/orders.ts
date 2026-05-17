@@ -15,8 +15,28 @@ import {
 import {
   sendOrderAcceptedEmail, sendOrderCompletedEmail, sendOrderConfirmedEmail, sendOrderCancelledEmail,
 } from '../lib/email.js';
+import { sendPushNotification } from '../lib/firebase-admin.js';
+import { sendTelegramNotification } from '../lib/telegram.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
+
+// Fire-and-forget: send FCM push + Telegram to a user
+function notifyUser(userId: string, title: string, body: string, orderId?: string): void {
+  db.select({ fcmToken: users.fcmToken, telegramChatId: users.telegramChatId, notifPush: users.notifPush })
+    .from(users).where(eq(users.id, userId)).limit(1)
+    .then(([u]) => {
+      if (!u) return;
+      if (u.notifPush && u.fcmToken) {
+        sendPushNotification(u.fcmToken, title, body, orderId ? { orderId } : {})
+          .then((ok) => {
+            if (!ok) db.update(users).set({ fcmToken: null } as any).where(eq(users.id, userId)).catch(() => {});
+          }).catch(() => {});
+      }
+      if (u.telegramChatId) {
+        sendTelegramNotification(u.telegramChatId, title, body).catch(() => {});
+      }
+    }).catch(() => {});
+}
 
 // All routes require auth
 ordersRouter.use('*', authMiddleware);
@@ -268,15 +288,12 @@ ordersRouter.post('/:id/messages', async (c) => {
 
   const msg = await db.insert(messages).values({ orderId: id, senderId: user.userId, senderName, text }).returning();
 
-  // Notify the other party via WebSocket
+  // Notify the other party via WebSocket + push + Telegram
   const recipientId = o.customerId === user.userId ? o.contractorId : o.customerId;
   if (recipientId) {
-    emitToUser(recipientId, {
-      type: 'chat',
-      orderId: id,
-      title: `Новое сообщение от ${senderName}`,
-      message: text.length > 60 ? text.slice(0, 60) + '…' : text,
-    });
+    const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+    emitToUser(recipientId, { type: 'chat', orderId: id, title: `Новое сообщение от ${senderName}`, message: preview });
+    notifyUser(recipientId, `💬 ${senderName}`, preview, id);
   }
 
   return c.json({ data: {
@@ -445,6 +462,18 @@ ordersRouter.patch('/:id/status', async (c) => {
     emitToUser(updatedOrder.contractorId, event);
   }
 
+  // Push + Telegram notifications
+  const shortId = id.slice(0, 8);
+  const notifyBody = `Заказ #${shortId} · ${updatedOrder.address}`;
+  if (status === 'accepted' || status === 'in_progress' || status === 'pending_confirmation' || status === 'completed') {
+    // Notify customer about contractor actions
+    if (updatedOrder.customerId) notifyUser(updatedOrder.customerId, label, notifyBody, id);
+  } else if (status === 'cancelled') {
+    const cancelledBy = order.customerId === user.userId ? 'customer' : 'contractor';
+    const notifyId = cancelledBy === 'customer' ? updatedOrder.contractorId : updatedOrder.customerId;
+    if (notifyId) notifyUser(notifyId, label, notifyBody, id);
+  }
+
   // Email notifications (fire and forget)
   if (status === 'accepted' && updatedOrder.customerId) {
     db.select({ email: users.notifEmailAddress, notif: users.notifEmail })
@@ -519,8 +548,14 @@ ordersRouter.post('/:id/complete', async (c) => {
     note: `Contractor ${user.userId} submitted completion photos`,
   });
 
-  // Email customer to confirm (fire and forget)
   const completeOrder = updated[0];
+
+  // Push + Telegram: notify customer that work is done, needs confirmation
+  if (completeOrder.customerId) {
+    notifyUser(completeOrder.customerId, '🔔 Работа завершена', `Исполнитель выполнил заказ #${id.slice(0, 8)} — подтвердите`, id);
+  }
+
+  // Email customer to confirm (fire and forget)
   db.select({ email: users.notifEmailAddress, notif: users.notifEmail })
     .from(users).where(eq(users.id, completeOrder.customerId)).limit(1)
     .then(([cu]) => {
@@ -585,12 +620,9 @@ ordersRouter.post('/:id/confirm', async (c) => {
 
   // Notify contractor: customer confirmed work, waiting for payment
   if (order.contractorId) {
-    emitToUser(order.contractorId, {
-      type: 'order_status',
-      orderId: id,
-      title: '💳 Заказчик подтвердил работу',
-      message: `Ожидайте оплату по СБП ${order.price}₽ — затем нажмите «Деньги получены»`,
-    });
+    const msg = `Ожидайте оплату по СБП ${order.price}₽ — затем нажмите «Деньги получены»`;
+    emitToUser(order.contractorId, { type: 'order_status', orderId: id, title: '💳 Заказчик подтвердил работу', message: msg });
+    notifyUser(order.contractorId, '💳 Заказчик подтвердил работу', msg, id);
   }
 
   return c.json({ data: formatOrder(confirmed) });
@@ -658,12 +690,9 @@ ordersRouter.post('/:id/confirm-payment', async (c) => {
   }
 
   // Notify customer: order fully done
-  emitToUser(order.customerId, {
-    type: 'order_status',
-    orderId: id,
-    title: '✅ Заказ завершён',
-    message: `Исполнитель подтвердил получение оплаты ${order.price}₽`,
-  });
+  const doneMsg = `Исполнитель подтвердил получение оплаты ${order.price}₽`;
+  emitToUser(order.customerId, { type: 'order_status', orderId: id, title: '✅ Заказ завершён', message: doneMsg });
+  notifyUser(order.customerId, '✅ Заказ завершён', doneMsg, id);
 
   // Email contractor: payment confirmed (fire and forget)
   db.select({ email: users.notifEmailAddress, notif: users.notifEmail })
