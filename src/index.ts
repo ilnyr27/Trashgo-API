@@ -380,7 +380,13 @@ async function autoConfirmStaleOrders() {
     }
   } catch (e: any) { console.error('[AUTO-CONFIRM]', e.message); }
 }
-setInterval(autoConfirmStaleOrders, 5 * 60 * 1000);
+let autoConfirmRunning = false;
+const guardedAutoConfirm = async () => {
+  if (autoConfirmRunning) return;
+  autoConfirmRunning = true;
+  try { await autoConfirmStaleOrders(); } finally { autoConfirmRunning = false; }
+};
+setInterval(guardedAutoConfirm, 5 * 60 * 1000);
 
 // Subscription cron — creates orders from active subscriptions every day at 06:00 Moscow time
 startSubscriptionCron();
@@ -399,7 +405,7 @@ setTimeout(cleanupExpiredOtps, 15_000); // also run shortly after startup
 const port = parseInt(process.env.PORT || '3000');
 
 console.log(`
-  🚀 TrashGo API v1.4.0 on http://localhost:${port}
+  🚀 TrashGo API v1.5.0 on http://localhost:${port}
   📍 Health: http://localhost:${port}/health
   📍 Auth:   http://localhost:${port}/api/v1/auth
   📍 Orders: http://localhost:${port}/api/v1/orders

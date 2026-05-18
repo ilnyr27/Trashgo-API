@@ -46,6 +46,10 @@ const createOrderSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   asap: z.boolean().default(false),
   photoUrls: z.array(photoUrlSchema).max(5).default([]),
+}).superRefine((data, ctx) => {
+  if (!data.asap && !data.scheduledAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'scheduledAt required when asap is false', path: ['scheduledAt'] });
+  }
 });
 
 const updateStatusSchema = z.object({
@@ -412,6 +416,25 @@ ordersRouter.patch('/:id/status', async (c) => {
     }, 400);
   }
 
+  // Authorization: who can make each transition
+  if (status === 'accepted') {
+    if (user.userId === order.customerId) {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Cannot accept your own order' } }, 403);
+    }
+  } else if (status === 'in_progress') {
+    if (user.userId !== order.contractorId) {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Only the assigned contractor can start the order' } }, 403);
+    }
+  } else if (status === 'cancelled') {
+    if (user.userId !== order.customerId && user.userId !== order.contractorId) {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+    }
+  } else if (status === 'pending_confirmation' || status === 'pending_payment' || status === 'completed') {
+    if (user.userId !== order.customerId && user.userId !== order.contractorId) {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+    }
+  }
+
   // Customer can only cancel an accepted order within 10 minutes of acceptance
   if (status === 'cancelled' && order.status === 'accepted' && order.customerId === user.userId) {
     const [hist] = await db.select({ createdAt: orderHistory.createdAt })
@@ -436,8 +459,12 @@ ordersRouter.patch('/:id/status', async (c) => {
 
   const updated = await db.update(orders)
     .set(updates)
-    .where(eq(orders.id, id))
+    .where(and(eq(orders.id, id), eq(orders.status, order.status)))
     .returning();
+
+  if (updated.length === 0) {
+    return c.json({ error: { code: 'CONFLICT', message: 'Order was modified concurrently — please refresh' } }, 409);
+  }
 
   await db.insert(orderHistory).values({
     orderId: id,
@@ -784,25 +811,30 @@ ordersRouter.post('/:id/rate', async (c) => {
   }
 
   if (order.customerId === user.userId) {
-    // Customer rates contractor
-    if (order.ratingByCustomer) {
+    // Customer rates contractor — atomic to prevent double-rating under concurrent requests
+    const ratingUpdate = await db.update(orders)
+      .set({ ratingByCustomer: rating })
+      .where(and(eq(orders.id, id), sql`${orders.ratingByCustomer} IS NULL`))
+      .returning({ id: orders.id });
+    if (ratingUpdate.length === 0) {
       return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
     }
-    await db.update(orders).set({ ratingByCustomer: rating }).where(eq(orders.id, id));
     if (order.contractorId) {
       const contractor = await db.select({ xp: users.xp }).from(users).where(eq(users.id, order.contractorId)).limit(1);
       const newXp = (contractor[0]?.xp ?? 0) + rating;
       const newLevel = calcLevel(newXp);
       await db.update(users).set({ xp: newXp, level: newLevel }).where(eq(users.id, order.contractorId));
-      // Check rating achievements for the contractor who received the rating
       checkRatingAchievements(order.contractorId, rating).catch(() => {});
     }
   } else if (order.contractorId === user.userId) {
-    // Contractor rates customer
-    if (order.ratingByContractor) {
+    // Contractor rates customer — atomic
+    const ratingUpdate = await db.update(orders)
+      .set({ ratingByContractor: rating })
+      .where(and(eq(orders.id, id), sql`${orders.ratingByContractor} IS NULL`))
+      .returning({ id: orders.id });
+    if (ratingUpdate.length === 0) {
       return c.json({ error: { code: 'ALREADY_RATED', message: 'Already rated' } }, 400);
     }
-    await db.update(orders).set({ ratingByContractor: rating }).where(eq(orders.id, id));
   } else {
     return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
   }

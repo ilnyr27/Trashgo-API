@@ -204,7 +204,7 @@ auth.post('/verify', async (c) => {
   const tokens = generateTokens(userRow.id, userRow.role);
 
   // Store refresh token
-  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const refreshExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   await db.insert(refreshTokens).values({
     userId: userRow.id,
     token: tokens.refreshToken,
@@ -298,7 +298,7 @@ auth.post('/register', async (c) => {
   const tokens = generateTokens(user.id, user.role);
 
   // Store refresh token
-  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const refreshExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   await db.insert(refreshTokens).values({
     userId: user.id,
     token: tokens.refreshToken,
@@ -349,7 +349,7 @@ auth.post('/verify-firebase', async (c) => {
 
   const userRow = existing[0];
   const tokens = generateTokens(userRow.id, userRow.role);
-  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const refreshExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   await db.insert(refreshTokens).values({ userId: userRow.id, token: tokens.refreshToken, expiresAt: refreshExpires });
 
   return c.json({
@@ -414,7 +414,7 @@ auth.post('/register-firebase', async (c) => {
 
   const user = newUser[0];
   const tokens = generateTokens(user.id, user.role);
-  const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const refreshExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   await db.insert(refreshTokens).values({ userId: user.id, token: tokens.refreshToken, expiresAt: refreshExpires });
 
   return c.json({ data: { user: formatUser(user), token: tokens.token, refreshToken: tokens.refreshToken } }, 201);
@@ -449,7 +449,7 @@ auth.post('/refresh', async (c) => {
     await db.delete(refreshTokens).where(eq(refreshTokens.token, token));
 
     const tokens = generateTokens(payload.userId, payload.role);
-    const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const refreshExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
     await db.insert(refreshTokens).values({
       userId: payload.userId,
       token: tokens.refreshToken,
