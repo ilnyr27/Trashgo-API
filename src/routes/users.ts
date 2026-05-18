@@ -72,6 +72,7 @@ usersRouter.get('/me', async (c) => {
       telegramLinked: !!u.telegramChatId,
       isAvailable: u.isAvailable ?? true,
       inn: u.inn ?? null,
+      innVerified: u.innVerified ?? false,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -124,6 +125,7 @@ usersRouter.patch('/me', async (c) => {
       notifEmailAddress: u.notifEmailAddress ?? null,
       isAvailable: u.isAvailable ?? true,
       inn: u.inn ?? null,
+      innVerified: u.innVerified ?? false,
       createdAt: u.createdAt.toISOString(),
     },
   });
@@ -272,6 +274,41 @@ usersRouter.get('/my-contractors', async (c) => {
     avgRating: r.avgRating ? Number(Number(r.avgRating).toFixed(1)) : null,
     ordersCompleted: Number(r.ordersCompleted),
   })) });
+});
+
+// POST /users/verify-inn — check self-employment status via FNS API
+usersRouter.post('/verify-inn', async (c) => {
+  const { userId } = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const inn = (body as any)?.inn?.toString().trim() ?? '';
+  if (!/^\d{12}$/.test(inn)) {
+    return c.json({ error: { code: 'VALIDATION', message: 'ИНН должен содержать 12 цифр' } }, 400);
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  let selfEmployed = false;
+  try {
+    const res = await fetch('https://statusnpd.nalog.ru/api/v1/tracker/taxpayers_status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ inn, requestDate: today }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data = await res.json() as any;
+      selfEmployed = data?.status === true || data?.taxpayerStatus === 1;
+    }
+  } catch (e: any) {
+    console.warn('[FNS] Verification failed:', e.message);
+    return c.json({ error: { code: 'FNS_UNAVAILABLE', message: 'Сервис ФНС недоступен — попробуйте позже' } }, 503);
+  }
+
+  // Save inn + verification result
+  await db.update(users)
+    .set({ inn, innVerified: selfEmployed } as any)
+    .where(eq(users.id, userId));
+
+  return c.json({ data: { inn, selfEmployed } });
 });
 
 export default usersRouter;

@@ -297,6 +297,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_bot_reply BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS escalated BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS contractor_id UUID REFERENCES users(id)`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn_verified BOOLEAN NOT NULL DEFAULT FALSE`);
     console.log('✓ DB schema up to date');
   } catch (e: any) {
     console.warn('Migration warning:', e.message);

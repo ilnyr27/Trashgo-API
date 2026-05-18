@@ -26,6 +26,7 @@ export const users = pgTable('users', {
   notifEmailAddress: varchar('notif_email_address', { length: 200 }),
   telegramChatId: varchar('telegram_chat_id', { length: 30 }),
   inn: varchar('inn', { length: 12 }),
+  innVerified: boolean('inn_verified').notNull().default(false),
   fcmToken: varchar('fcm_token', { length: 300 }),
   frozen: boolean('frozen').notNull().default(false),
   freezeReason: varchar('freeze_reason', { length: 500 }),
