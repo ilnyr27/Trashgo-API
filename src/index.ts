@@ -298,6 +298,7 @@ async function runMigrations() {
     await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS escalated BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS contractor_id UUID REFERENCES users(id)`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn_verified BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200) UNIQUE`);
     await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS waste_type VARCHAR(50) NOT NULL DEFAULT 'household'`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS blocked_addresses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), address TEXT NOT NULL, customer_id UUID NOT NULL REFERENCES users(id), contractor_id UUID NOT NULL REFERENCES users(id), order_id UUID REFERENCES orders(id), reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_blocked_addresses_customer ON blocked_addresses(customer_id)`);

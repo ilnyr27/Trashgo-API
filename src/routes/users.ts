@@ -69,6 +69,7 @@ usersRouter.get('/me', async (c) => {
       notifPush: u.notifPush ?? true,
       notifEmail: u.notifEmail ?? false,
       notifEmailAddress: u.notifEmailAddress ?? null,
+      email: u.email ?? null,
       telegramLinked: !!u.telegramChatId,
       isAvailable: u.isAvailable ?? true,
       inn: u.inn ?? null,

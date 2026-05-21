@@ -19,12 +19,17 @@ const auth = new Hono();
 
 // Validation schemas
 const loginSchema = z.object({
-  phone: z.string().min(10).max(20),
+  email: z.string().email(),
+  phone: z.string().min(10).max(20).optional(),
+  // Legacy phone-based login (backward compat for Telegram OTP flow)
   deliveryEmail: z.string().email().optional(),
 });
 
 const verifySchema = z.object({
-  phone: z.string().min(10).max(20),
+  // email-based flow
+  email: z.string().email().optional(),
+  // legacy phone-based flow
+  phone: z.string().min(10).max(20).optional(),
   code: z.string().length(4),
   role: z.enum(['customer', 'contractor']).optional(),
 });
@@ -40,6 +45,8 @@ function validateInn12(inn: string): boolean {
 }
 
 const registerSchema = z.object({
+  // Email-based registration
+  email: z.string().email().optional(),
   phone: z.string().min(10).max(20),
   code: z.string().length(4),
   name: z.string().min(1).max(100),
@@ -69,81 +76,79 @@ function generateTokens(userId: string, role: 'customer' | 'contractor') {
   return { token, refreshToken };
 }
 
-// POST /auth/login — send OTP
+// POST /auth/login — send OTP (email-primary flow)
 auth.post('/login', async (c) => {
   const body = await c.req.json();
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: { code: 'VALIDATION', message: 'Invalid phone', details: parsed.error.flatten().fieldErrors } }, 400);
+    return c.json({ error: { code: 'VALIDATION', message: 'Введите корректный email', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { phone, deliveryEmail } = parsed.data;
+  const { email, phone, deliveryEmail } = parsed.data;
 
-  const retryAfter = rateLimit(phone);
+  // Rate limit by email
+  const retryAfter = rateLimit(email);
   if (retryAfter > 0) {
     c.header('Retry-After', String(retryAfter));
-    return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many OTP requests. Try again later.' } }, 429);
+    return c.json({ error: { code: 'RATE_LIMITED', message: 'Слишком много попыток. Подождите.' } }, 429);
   }
 
-  const useTelegram = hasTelegram();
-  const useSms = hasSms();
-  const useEmail = isEmailEnabled() && !!deliveryEmail;
+  // Look up user by email
+  const existing = await db.select({ id: users.id, phone: users.phone, telegramChatId: users.telegramChatId })
+    .from(users).where(eq(users.email, email)).limit(1);
+
+  // New user flow: if not found and no phone provided — ask frontend to show phone field
+  if (existing.length === 0 && !phone) {
+    return c.json({ data: { otpSent: false, isNewUser: true, needsPhone: true, channel: 'email' } });
+  }
+
   const forceCode = process.env.TEST_OTP_CODE;
-  const isProd = !forceCode && (useTelegram || useSms || useEmail);
+  const useEmailOtp = isEmailEnabled();
+  const isProd = !forceCode && useEmailOtp;
   const code = forceCode || (isProd ? String(Math.floor(1000 + Math.random() * 9000)) : '1111');
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  await db.insert(otpCodes).values({ phone, code, expiresAt });
+  // Store OTP keyed by email
+  await db.insert(otpCodes).values({ phone: email, code, expiresAt });
 
-  const existing = await db.select({ id: users.id, telegramChatId: users.telegramChatId })
-    .from(users).where(eq(users.phone, phone)).limit(1);
-
-  let channel: 'telegram' | 'sms' | 'dev' | 'email' = 'dev';
+  let channel: 'email' | 'telegram' | 'dev' = 'dev';
   let telegramBotLink: string | undefined;
 
-  // Email takes priority if explicitly requested
-  if (useEmail && deliveryEmail) {
-    await sendEmailOtp(deliveryEmail, code);
+  if (useEmailOtp) {
+    await sendEmailOtp(email, code);
     channel = 'email';
-  } else if (useTelegram && existing[0]?.telegramChatId) {
-    // User already linked Telegram — OTP arrives as a direct notification, no bot interaction needed
+  } else if (hasTelegram() && existing[0]?.telegramChatId) {
     await sendTelegramOtp(existing[0].telegramChatId, code);
     channel = 'telegram';
-  } else if (useSms) {
-    // SMS available — deliver directly, no Telegram interaction needed
-    await sendOtp(phone, code);
-    channel = 'sms';
-  } else if (useTelegram) {
-    // No chatId and no SMS — show bot link as last resort (one-time tap to link Telegram)
+  } else if (hasTelegram()) {
     const botUsername = await getBotUsername();
     if (botUsername) {
       cleanupTelegramTokens();
       const startToken = nanoid(8);
-      telegramTokens.set(startToken, { phone, code, exp: Date.now() + 10 * 60 * 1000 });
+      telegramTokens.set(startToken, { phone: email, code, exp: Date.now() + 10 * 60 * 1000 });
       telegramBotLink = `https://t.me/${botUsername}?start=${startToken}`;
       channel = 'telegram';
     } else {
-      console.log(`[OTP DEV] ${phone}: ${code}`);
-      channel = 'dev';
+      console.log(`[OTP DEV] ${email}: ${code}`);
     }
   } else {
-    console.log(`[OTP DEV] ${phone}: ${code}`);
-    channel = 'dev';
+    console.log(`[OTP DEV] ${email}: ${code}`);
   }
 
   return c.json({
     data: {
-      otpSent: !telegramBotLink,
+      otpSent: true,
       isNewUser: existing.length === 0,
+      needsPhone: false,
       channel,
+      deliveryEmail: email,
       ...(telegramBotLink ? { telegramBotLink } : {}),
-      ...(deliveryEmail && channel === 'email' ? { deliveryEmail } : {}),
       ...((channel === 'dev' || !!forceCode) ? { devCode: code } : {}),
     },
   });
 });
 
-// POST /auth/verify — verify OTP for existing user
+// POST /auth/verify — verify OTP (supports email-key and legacy phone-key)
 auth.post('/verify', async (c) => {
   const body = await c.req.json();
   const parsed = verifySchema.safeParse(body);
@@ -151,20 +156,22 @@ auth.post('/verify', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
   }
 
-  const { phone, code, role } = parsed.data;
+  const { email, phone, code, role } = parsed.data;
+  const otpKey = email || phone || '';
+  if (!otpKey) return c.json({ error: { code: 'VALIDATION', message: 'email or phone required' } }, 400);
 
-  // Brute-force protection: max 5 wrong attempts per phone per 10 minutes
-  const verifyRetryAfter = rateLimit(`verify:${phone}`, 5, 10 * 60 * 1000);
+  // Brute-force protection
+  const verifyRetryAfter = rateLimit(`verify:${otpKey}`, 5, 10 * 60 * 1000);
   if (verifyRetryAfter > 0) {
     c.header('Retry-After', String(verifyRetryAfter));
     return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
   }
 
-  // Find valid OTP
+  // Find valid OTP (key = email or phone)
   const otp = await db.select()
     .from(otpCodes)
     .where(and(
-      eq(otpCodes.phone, phone),
+      eq(otpCodes.phone, otpKey),
       eq(otpCodes.code, code),
       eq(otpCodes.used, 0),
       gt(otpCodes.expiresAt, new Date()),
@@ -175,8 +182,10 @@ auth.post('/verify', async (c) => {
     return c.json({ error: { code: 'INVALID_OTP', message: 'Wrong or expired code' } }, 400);
   }
 
-  // Find user BEFORE marking OTP used — frozen check must not consume the code
-  const userRows = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  // Find user — by email (new flow) or phone (legacy)
+  const userRows = email
+    ? await db.select().from(users).where(eq(users.email, email)).limit(1)
+    : await db.select().from(users).where(eq(users.phone, phone!)).limit(1);
 
   // Block frozen accounts before consuming the OTP
   if (userRows.length > 0 && (userRows[0] as any).frozen) {
@@ -237,26 +246,34 @@ auth.post('/register', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { phone, code, name, role, district, transportMode, inn, refCode } = parsed.data;
+  const { email, phone, code, name, role, district, transportMode, inn, refCode } = parsed.data;
+  // OTP key: email (new flow) or phone (legacy)
+  const otpKey = email || phone;
 
-  // Verify OTP was used for this phone
+  // Verify OTP was used for this key
   const otp = await db.select()
     .from(otpCodes)
     .where(and(
-      eq(otpCodes.phone, phone),
+      eq(otpCodes.phone, otpKey),
       eq(otpCodes.code, code),
       eq(otpCodes.used, 1),
     ))
     .limit(1);
 
   if (otp.length === 0) {
-    return c.json({ error: { code: 'INVALID_OTP', message: 'Verify phone first' } }, 400);
+    return c.json({ error: { code: 'INVALID_OTP', message: 'Сначала подтвердите email' } }, 400);
   }
 
-  // Check if user already exists
-  const existing = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
-  if (existing.length > 0) {
-    return c.json({ error: { code: 'USER_EXISTS', message: 'User already registered' } }, 409);
+  // Check if user already exists (by email or phone)
+  const existingByPhone = await db.select({ id: users.id }).from(users).where(eq(users.phone, phone)).limit(1);
+  if (existingByPhone.length > 0) {
+    return c.json({ error: { code: 'USER_EXISTS', message: 'Аккаунт с таким номером уже существует' } }, 409);
+  }
+  if (email) {
+    const existingByEmail = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existingByEmail.length > 0) {
+      return c.json({ error: { code: 'USER_EXISTS', message: 'Аккаунт с таким email уже существует' } }, 409);
+    }
   }
 
   // Resolve referrer if refCode provided
@@ -275,6 +292,7 @@ auth.post('/register', async (c) => {
     name,
     role,
     district,
+    ...(email ? { email } : {}),
     ...(transportMode ? { transportMode } : {}),
     ...(inn ? { inn } : {}),
     referralCode: newReferralCode,
