@@ -14,6 +14,7 @@ import { telegramTokens, cleanupTelegramTokens } from '../lib/telegramTokens.js'
 import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
 import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { censor } from '../lib/censor.js';
 
 const auth = new Hono();
 
@@ -306,7 +307,7 @@ auth.post('/register', async (c) => {
   // Create user
   const newUser = await db.insert(users).values({
     phone,
-    name,
+    name: censor(name),
     role,
     district,
     ...(email ? { email } : {}),

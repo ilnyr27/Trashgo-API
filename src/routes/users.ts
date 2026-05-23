@@ -5,6 +5,7 @@ import { db } from '../db/index.js';
 import { users, orders, otpCodes } from '../db/schema.js';
 import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { censor } from '../lib/censor.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 
 const usersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
@@ -97,6 +98,7 @@ usersRouter.patch('/me', async (c) => {
 
   const { addresses, notifEmailAddress, fcmToken, inn, ...rest } = parsed.data;
   const dbSet: Record<string, unknown> = { ...rest };
+  if (dbSet.name) dbSet.name = censor(String(dbSet.name));
   if (addresses !== undefined) dbSet.addresses = JSON.stringify(addresses);
   if (notifEmailAddress !== undefined) dbSet.notifEmailAddress = notifEmailAddress;
   if (fcmToken !== undefined) dbSet.fcmToken = fcmToken;

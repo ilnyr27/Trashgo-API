@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { supportMessages, users } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 import { sendTelegramNotification } from '../lib/telegram.js';
+import { censor } from '../lib/censor.js';
 
 const supportRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 supportRouter.use('*', authMiddleware);
@@ -66,7 +67,7 @@ function generateBotReply(message: string, category: string | null): string {
 supportRouter.post('/', async (c) => {
   const { userId } = c.get('user');
   const body = await c.req.json().catch(() => ({}));
-  const message = ((body as any)?.message ?? '').toString().trim().slice(0, 2000);
+  const message = censor(((body as any)?.message ?? '').toString().trim().slice(0, 2000));
   if (!message) return c.json({ error: { code: 'VALIDATION', message: 'Message required' } }, 400);
   const category = ((body as any)?.category ?? '').toString().trim().slice(0, 50) || null;
 

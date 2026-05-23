@@ -16,6 +16,7 @@ import {
   sendOrderAcceptedEmail, sendOrderCompletedEmail, sendOrderConfirmedEmail, sendOrderCancelledEmail,
 } from '../lib/email.js';
 import { notifyUser } from '../lib/notify.js';
+import { censor } from '../lib/censor.js';
 
 const ordersRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -259,7 +260,7 @@ ordersRouter.post('/:id/messages', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
-  const text = (body?.text ?? '').toString().trim().slice(0, 1000);
+  const text = censor((body?.text ?? '').toString().trim().slice(0, 1000));
   if (!text) return c.json({ error: { code: 'VALIDATION', message: 'Text required' } }, 400);
 
   const order = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
@@ -319,7 +320,7 @@ ordersRouter.patch('/:id', async (c) => {
     ...(d.district !== undefined && { district: d.district }),
     ...(d.volume !== undefined && { volume: d.volume }),
     ...(d.price !== undefined && { price: d.price }),
-    ...(d.description !== undefined && { description: stripHtml(d.description) }),
+    ...(d.description !== undefined && { description: censor(stripHtml(d.description)) }),
     ...(d.photoUrls !== undefined && { photoUrls: JSON.stringify(d.photoUrls) }),
     ...(d.asap !== undefined && { asap: d.asap }),
     ...((d.asap === true) && { scheduledAt: null }),
@@ -359,7 +360,7 @@ ordersRouter.post('/', async (c) => {
     district: parsed.data.district,
     volume: parsed.data.volume,
     price: parsed.data.price,
-    description: stripHtml(parsed.data.description),
+    description: censor(stripHtml(parsed.data.description)),
     photoUrls: JSON.stringify(parsed.data.photoUrls),
     asap: parsed.data.asap,
     scheduledAt: parsed.data.asap ? null : new Date(parsed.data.scheduledAt!),
