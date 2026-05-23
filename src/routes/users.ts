@@ -227,7 +227,7 @@ usersRouter.get('/contractors', async (c) => {
 usersRouter.get('/admin/frozen', async (c) => {
   const adminSecret = process.env.ADMIN_SECRET;
   const provided = c.req.query('secret') || c.req.header('Authorization')?.replace('Bearer ', '');
-  if (adminSecret && provided !== adminSecret) {
+  if (!adminSecret || provided !== adminSecret) {
     return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
   }
 
@@ -246,7 +246,7 @@ usersRouter.get('/admin/frozen', async (c) => {
 usersRouter.post('/admin/unfreeze/:id', async (c) => {
   const adminSecret = process.env.ADMIN_SECRET;
   const provided = c.req.query('secret') || c.req.header('Authorization')?.replace('Bearer ', '');
-  if (adminSecret && provided !== adminSecret) {
+  if (!adminSecret || provided !== adminSecret) {
     return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
   }
   const id = c.req.param('id');
