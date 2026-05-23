@@ -367,8 +367,13 @@ usersRouter.post('/request-email-change', async (c) => {
   const otpKey = `ec:${userId}`;
 
   // Invalidate previous pending email-change OTPs for this user
-  await db.update(otpCodes).set({ used: 1 }).where(and(eq(otpCodes.phone, otpKey), eq(otpCodes.used, 0)));
-  await db.insert(otpCodes).values({ phone: otpKey, code, expiresAt });
+  try {
+    await db.update(otpCodes).set({ used: 1 }).where(and(eq(otpCodes.phone, otpKey), eq(otpCodes.used, 0)));
+    await db.insert(otpCodes).values({ phone: otpKey, code, expiresAt });
+  } catch (e: any) {
+    console.error('[request-email-change] DB error:', e?.message);
+    return c.json({ error: { code: 'DB_ERROR', message: 'Ошибка сервера. Попробуйте позже.' } }, 500);
+  }
 
   if (isEmailEnabled()) {
     await sendEmailOtp(email as string, code);
@@ -379,7 +384,7 @@ usersRouter.post('/request-email-change', async (c) => {
   return c.json({
     data: {
       sent: true,
-      ...(forceCode ? { devCode: code } : {}),
+      ...((!isEmailEnabled() || forceCode) ? { devCode: code } : {}),
     },
   });
 });

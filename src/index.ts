@@ -253,61 +253,67 @@ app.onError((err, c) => {
   }, 500);
 });
 
-// Run pending schema migrations
+// Run pending schema migrations — each step in its own try-catch so one failure doesn't block the rest
 async function runMigrations() {
-  try {
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_urls TEXT NOT NULL DEFAULT '[]'`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS asap BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE orders ALTER COLUMN scheduled_at DROP NOT NULL`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS completion_photo_urls TEXT NOT NULL DEFAULT '[]'`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INTEGER NOT NULL DEFAULT 0`);
-    await db.execute(sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_confirmation' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_confirmation'; END IF; END $$`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID NOT NULL REFERENCES orders(id), sender_id UUID NOT NULL REFERENCES users(id), sender_name VARCHAR(100) NOT NULL DEFAULT '', text TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_messages_order ON messages(order_id, created_at)`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_customer INTEGER`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_contractor INTEGER`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS transport_mode VARCHAR(50) NOT NULL DEFAULT 'car'`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) UNIQUE`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id)`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS referrals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), referrer_id UUID NOT NULL REFERENCES users(id), referee_id UUID NOT NULL REFERENCES users(id), created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS addresses TEXT NOT NULL DEFAULT '[]'`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_push BOOLEAN NOT NULL DEFAULT TRUE`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email_address VARCHAR(200)`);
-    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_150_paid BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_expires_at TIMESTAMP`);
-    await db.execute(sql`ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_monthly_used INTEGER NOT NULL DEFAULT 0`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS user_achievements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), achievement_id VARCHAR(50) NOT NULL, xp_rewarded INTEGER NOT NULL DEFAULT 0, unlocked_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(30)`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS subscriptions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), customer_id UUID NOT NULL REFERENCES users(id), address TEXT NOT NULL, district VARCHAR(100) NOT NULL DEFAULT '', days TEXT NOT NULL DEFAULT '[]', time VARCHAR(8) NOT NULL DEFAULT '18:00', price INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(300)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn VARCHAR(12)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS frozen BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS freeze_reason VARCHAR(500)`);
-    await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 1`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id)`);
-    await db.execute(sql`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_payment' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_payment'; END IF; END $$`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS support_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), message TEXT NOT NULL, reply TEXT, replied_at TIMESTAMP, status VARCHAR(20) NOT NULL DEFAULT 'open', created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id, created_at)`);
-    await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP`);
-    await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS category VARCHAR(50)`);
-    await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_bot_reply BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS escalated BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS contractor_id UUID REFERENCES users(id)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS inn_verified BOOLEAN NOT NULL DEFAULT FALSE`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200) UNIQUE`);
-    await db.execute(sql`ALTER TABLE otp_codes ALTER COLUMN phone TYPE VARCHAR(200)`);
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_telegram BOOLEAN NOT NULL DEFAULT TRUE`);
-    await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS waste_type VARCHAR(50) NOT NULL DEFAULT 'household'`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS blocked_addresses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), address TEXT NOT NULL, customer_id UUID NOT NULL REFERENCES users(id), contractor_id UUID NOT NULL REFERENCES users(id), order_id UUID REFERENCES orders(id), reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMP NOT NULL DEFAULT NOW())`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_blocked_addresses_customer ON blocked_addresses(customer_id)`);
-    console.log('✓ DB schema up to date');
-  } catch (e: any) {
-    console.warn('Migration warning:', e.message);
+  const steps: [string, string][] = [
+    ['orders.photo_urls', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_urls TEXT NOT NULL DEFAULT '[]'`],
+    ['orders.asap', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS asap BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['orders.scheduled_at nullable', `ALTER TABLE orders ALTER COLUMN scheduled_at DROP NOT NULL`],
+    ['orders.completion_photo_urls', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS completion_photo_urls TEXT NOT NULL DEFAULT '[]'`],
+    ['users.balance', `ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INTEGER NOT NULL DEFAULT 0`],
+    ['enum pending_confirmation', `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_confirmation' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_confirmation'; END IF; END $$`],
+    ['messages table', `CREATE TABLE IF NOT EXISTS messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID NOT NULL REFERENCES orders(id), sender_id UUID NOT NULL REFERENCES users(id), sender_name VARCHAR(100) NOT NULL DEFAULT '', text TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_messages_order', `CREATE INDEX IF NOT EXISTS idx_messages_order ON messages(order_id, created_at)`],
+    ['orders.rating_by_customer', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_customer INTEGER`],
+    ['orders.rating_by_contractor', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_by_contractor INTEGER`],
+    ['users.transport_mode', `ALTER TABLE users ADD COLUMN IF NOT EXISTS transport_mode VARCHAR(50) NOT NULL DEFAULT 'car'`],
+    ['users.referral_code', `ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) UNIQUE`],
+    ['users.referred_by', `ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id)`],
+    ['referrals table', `CREATE TABLE IF NOT EXISTS referrals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), referrer_id UUID NOT NULL REFERENCES users(id), referee_id UUID NOT NULL REFERENCES users(id), created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['users.addresses', `ALTER TABLE users ADD COLUMN IF NOT EXISTS addresses TEXT NOT NULL DEFAULT '[]'`],
+    ['users.notif_push', `ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_push BOOLEAN NOT NULL DEFAULT TRUE`],
+    ['users.notif_email', `ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['users.notif_email_address', `ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_email_address VARCHAR(200)`],
+    ['referrals.bonus_150_paid', `ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_150_paid BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['referrals.bonus_expires_at', `ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_expires_at TIMESTAMP`],
+    ['referrals.bonus_monthly_used', `ALTER TABLE referrals ADD COLUMN IF NOT EXISTS bonus_monthly_used INTEGER NOT NULL DEFAULT 0`],
+    ['user_achievements table', `CREATE TABLE IF NOT EXISTS user_achievements (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), achievement_id VARCHAR(50) NOT NULL, xp_rewarded INTEGER NOT NULL DEFAULT 0, unlocked_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_user_achievements_user', `CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id)`],
+    ['users.telegram_chat_id', `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(30)`],
+    ['subscriptions table', `CREATE TABLE IF NOT EXISTS subscriptions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), customer_id UUID NOT NULL REFERENCES users(id), address TEXT NOT NULL, district VARCHAR(100) NOT NULL DEFAULT '', days TEXT NOT NULL DEFAULT '[]', time VARCHAR(8) NOT NULL DEFAULT '18:00', price INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_subscriptions_customer', `CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id)`],
+    ['users.fcm_token', `ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(300)`],
+    ['users.inn', `ALTER TABLE users ADD COLUMN IF NOT EXISTS inn VARCHAR(12)`],
+    ['users.frozen', `ALTER TABLE users ADD COLUMN IF NOT EXISTS frozen BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['users.freeze_reason', `ALTER TABLE users ADD COLUMN IF NOT EXISTS freeze_reason VARCHAR(500)`],
+    ['subscriptions.volume', `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS volume INTEGER NOT NULL DEFAULT 1`],
+    ['orders.subscription_id', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id)`],
+    ['enum pending_payment', `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'pending_payment' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'pending_payment'; END IF; END $$`],
+    ['users.is_available', `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE`],
+    ['support_messages table', `CREATE TABLE IF NOT EXISTS support_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), message TEXT NOT NULL, reply TEXT, replied_at TIMESTAMP, status VARCHAR(20) NOT NULL DEFAULT 'open', created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_support_user', `CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id, created_at)`],
+    ['support_messages.read_at', `ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP`],
+    ['support_messages.category', `ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS category VARCHAR(50)`],
+    ['support_messages.is_bot_reply', `ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_bot_reply BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['support_messages.escalated', `ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS escalated BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['subscriptions.contractor_id', `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS contractor_id UUID REFERENCES users(id)`],
+    ['users.inn_verified', `ALTER TABLE users ADD COLUMN IF NOT EXISTS inn_verified BOOLEAN NOT NULL DEFAULT FALSE`],
+    ['users.email', `ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200) UNIQUE`],
+    ['otp_codes.phone VARCHAR(200)', `ALTER TABLE otp_codes ALTER COLUMN phone TYPE VARCHAR(200)`],
+    ['users.notif_telegram', `ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_telegram BOOLEAN NOT NULL DEFAULT TRUE`],
+    ['orders.waste_type', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS waste_type VARCHAR(50) NOT NULL DEFAULT 'household'`],
+    ['blocked_addresses table', `CREATE TABLE IF NOT EXISTS blocked_addresses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), address TEXT NOT NULL, customer_id UUID NOT NULL REFERENCES users(id), contractor_id UUID NOT NULL REFERENCES users(id), order_id UUID REFERENCES orders(id), reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_blocked_addresses_customer', `CREATE INDEX IF NOT EXISTS idx_blocked_addresses_customer ON blocked_addresses(customer_id)`],
+  ];
+
+  for (const [name, ddl] of steps) {
+    try {
+      await db.execute(sql.raw(ddl));
+    } catch (e: any) {
+      console.warn(`Migration skip [${name}]:`, e.message?.slice(0, 120));
+    }
   }
+  console.log('✓ DB migrations done');
 }
 
 await runMigrations();
