@@ -303,7 +303,9 @@ auth.post('/register', async (c) => {
     return c.json({ error: { code: 'VALIDATION', message: 'Invalid input', details: parsed.error.flatten().fieldErrors } }, 400);
   }
 
-  const { email, phone, code, name, role, district, transportMode, inn, sbpBank, refCode } = parsed.data;
+  const { phone, code, name, role, district, transportMode, inn, sbpBank, refCode } = parsed.data;
+  // Normalize email to lowercase — OTP was stored with lowercased key in /auth/login
+  const email = parsed.data.email?.toLowerCase().trim();
   // OTP key: email (new flow) or phone (legacy)
   const otpKey = email || phone;
 
@@ -318,7 +320,7 @@ auth.post('/register', async (c) => {
     .limit(1);
 
   if (otp.length === 0) {
-    return c.json({ error: { code: 'INVALID_OTP', message: 'Сначала подтвердите email' } }, 400);
+    return c.json({ error: { code: 'INVALID_OTP', message: 'Неверный или истёкший код' } }, 400);
   }
 
   // Check if user already exists (by email or phone)
