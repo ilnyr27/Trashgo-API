@@ -2,6 +2,11 @@ import { Resend } from 'resend';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const FROM = process.env.RESEND_FROM_EMAIL ?? 'TrashGo <onboarding@resend.dev>';
+// onboarding@resend.dev is a sandbox sender — only delivers to the Resend account owner.
+// Set RESEND_FROM_EMAIL to a verified domain sender for production delivery.
+if (resend && FROM.includes('onboarding@resend.dev')) {
+  console.warn('[EMAIL] WARNING: Using onboarding@resend.dev — emails only deliver to the Resend account owner. Set RESEND_FROM_EMAIL to a verified domain sender.');
+}
 
 export const isEmailEnabled = () => !!resend;
 
