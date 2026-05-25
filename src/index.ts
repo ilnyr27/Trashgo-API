@@ -20,6 +20,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import adminRoutes from './routes/admin.js';
 import supportRoutes from './routes/support.js';
 import uploadRoutes from './routes/upload.js';
+import geocodeRoutes from './routes/geocode.js';
 import { db } from './db/index.js';
 import { calcLevel, checkOrderAchievements, checkVolumeAchievements, checkDistrictAchievements, checkTimeAchievements, checkAsapAchievements, checkEcoAchievements, checkVehicleAchievements, checkTenureAchievements } from './lib/achievements.js';
 import { sql, and, eq, lt } from 'drizzle-orm';
@@ -112,6 +113,7 @@ app.route('/api/v1/leaderboard', leaderboardRoutes);
 app.route('/api/v1/admin', adminRoutes);
 app.route('/api/v1/support', supportRoutes);
 app.route('/api/v1/upload', uploadRoutes);
+app.route('/api/v1/geocode', geocodeRoutes);
 
 // Geocoding proxy — avoids Nominatim browser User-Agent restrictions
 // ?q=... &limit=N (default 1, max 5)
