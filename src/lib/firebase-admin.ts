@@ -78,6 +78,8 @@ export async function sendPushNotification(
 ): Promise<boolean> {
   const admin = await getAdmin();
   if (!admin) return false;
+  // Derive a tag/group key: order-specific notifications replace each other per order
+  const tag = data?.orderId ? `order-${data.orderId}` : data?.type ?? 'trashgo';
   try {
     await admin.messaging().send({
       token: fcmToken,
@@ -90,6 +92,8 @@ export async function sendPushNotification(
           defaultSound: true,
           defaultVibrateTimings: true,
           defaultLightSettings: true,
+          notificationGroup: 'trashgo',
+          tag,
         },
       },
       webpush: {
