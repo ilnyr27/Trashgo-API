@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
 import { users, referrals } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
+import { hasActiveSubscription } from '../lib/subscriptionStatus.js';
 
 const referralsRouter = new Hono<{ Variables: { user: JwtPayload } }>();
 
@@ -39,7 +40,7 @@ referralsRouter.get('/my', async (c) => {
     : eq(referrals.referrerId, userId);
 
   const myReferrals = await db
-    .select({ name: users.name, role: users.role, joinedAt: users.createdAt })
+    .select({ id: users.id, name: users.name, role: users.role, joinedAt: users.createdAt })
     .from(referrals)
     .innerJoin(users, eq(users.id, referrals.refereeId))
     .where(whereClause)
@@ -53,17 +54,23 @@ referralsRouter.get('/my', async (c) => {
   const count = myReferrals.length;
   const discount = target === 'customer' ? Math.min(count * 2, 20) : undefined;
 
+  // Enrich each referral with subscription activity status
+  const referralsWithStatus = await Promise.all(
+    myReferrals.map(async (r) => ({
+      name: r.name,
+      role: r.role,
+      joinedAt: r.joinedAt.toISOString(),
+      isActive: await hasActiveSubscription(r.id),
+    }))
+  );
+
   return c.json({
     data: {
       code: user.referralCode,
       link,
       count,
       ...(discount !== undefined ? { discount } : {}),
-      referrals: myReferrals.map((r) => ({
-        name: r.name,
-        role: r.role,
-        joinedAt: r.joinedAt.toISOString(),
-      })),
+      referrals: referralsWithStatus,
     },
   });
 });
