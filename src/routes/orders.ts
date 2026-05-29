@@ -57,7 +57,7 @@ const createOrderSchema = z.object({
 });
 
 const updateStatusSchema = z.object({
-  status: z.enum(['accepted', 'in_progress', 'completed', 'cancelled', 'pending_confirmation', 'pending_payment']),
+  status: z.enum(['accepted', 'en_route', 'in_progress', 'completed', 'cancelled', 'pending_confirmation', 'pending_payment']),
 });
 
 const completeOrderSchema = z.object({
@@ -424,7 +424,8 @@ ordersRouter.patch('/:id/status', async (c) => {
   // Validate state machine
   const validTransitions: Record<string, string[]> = {
     new: ['accepted', 'cancelled'],
-    accepted: ['in_progress', 'cancelled'],
+    accepted: ['en_route', 'in_progress', 'cancelled'],
+    en_route: ['in_progress', 'cancelled'],
     in_progress: ['pending_confirmation', 'cancelled'],
     pending_confirmation: ['pending_payment', 'cancelled'],
     pending_payment: ['completed', 'cancelled'],
@@ -442,6 +443,10 @@ ordersRouter.patch('/:id/status', async (c) => {
     if (user.userId === order.customerId) {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Cannot accept your own order' } }, 403);
     }
+  } else if (status === 'en_route') {
+    if (user.userId !== order.contractorId) {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Only the assigned contractor can set en_route' } }, 403);
+    }
   } else if (status === 'in_progress') {
     if (user.userId !== order.contractorId) {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Only the assigned contractor can start the order' } }, 403);
@@ -456,9 +461,9 @@ ordersRouter.patch('/:id/status', async (c) => {
     }
   }
 
-  // Customer cannot cancel once contractor has picked up (in_progress)
-  if (status === 'cancelled' && order.status === 'in_progress' && order.customerId === user.userId) {
-    return c.json({ error: { code: 'ALREADY_PICKED_UP', message: 'Нельзя отменить — исполнитель уже забрал мусор' } }, 400);
+  // Customer cannot cancel once contractor is en_route or has picked up (in_progress)
+  if (status === 'cancelled' && (order.status === 'in_progress' || order.status === 'en_route') && order.customerId === user.userId) {
+    return c.json({ error: { code: 'ALREADY_PICKED_UP', message: 'Нельзя отменить — исполнитель уже выехал' } }, 400);
   }
 
   // Customer can only cancel an accepted order within 10 minutes of acceptance
@@ -512,6 +517,7 @@ ordersRouter.patch('/:id/status', async (c) => {
   const updatedOrder = updated[0];
   const statusLabels: Record<string, string> = {
     accepted: 'Исполнитель принял заказ',
+    en_route: 'Исполнитель выехал к вам',
     in_progress: 'Исполнитель выполняет заказ',
     pending_confirmation: 'Ожидает вашего подтверждения',
     completed: 'Заказ выполнен',
@@ -528,7 +534,7 @@ ordersRouter.patch('/:id/status', async (c) => {
   // Push + Telegram notifications
   const shortId = id.slice(0, 8);
   const notifyBody = `Заказ #${shortId} · ${updatedOrder.address}`;
-  if (effectiveStatus === 'accepted' || effectiveStatus === 'in_progress' || effectiveStatus === 'pending_confirmation' || effectiveStatus === 'completed') {
+  if (effectiveStatus === 'accepted' || effectiveStatus === 'en_route' || effectiveStatus === 'in_progress' || effectiveStatus === 'pending_confirmation' || effectiveStatus === 'completed') {
     // Notify customer about contractor actions
     if (updatedOrder.customerId) notifyUser(updatedOrder.customerId, label, notifyBody, id);
   } else if (effectiveStatus === 'cancelled') {

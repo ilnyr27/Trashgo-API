@@ -337,6 +337,7 @@ async function runMigrations() {
     ['users.sbp_bank', `ALTER TABLE users ADD COLUMN IF NOT EXISTS sbp_bank VARCHAR(100)`],
     ['access_plans table', `CREATE TABLE IF NOT EXISTS access_plans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), status VARCHAR(20) NOT NULL DEFAULT 'pending', price_at_purchase INTEGER NOT NULL DEFAULT 50, payment_ref VARCHAR(200), starts_at TIMESTAMP, expires_at TIMESTAMP, confirmed_at TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
     ['idx_access_plans_user', `CREATE INDEX IF NOT EXISTS idx_access_plans_user ON access_plans(user_id)`],
+    ['enum en_route', `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'en_route' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')) THEN ALTER TYPE order_status ADD VALUE 'en_route' AFTER 'accepted'; END IF; END $$`],
   ];
 
   for (const [name, ddl] of steps) {

@@ -3,7 +3,7 @@ import { pgTable, uuid, varchar, text, integer, boolean, timestamp, pgEnum, inde
 // Enums
 export const userRoleEnum = pgEnum('user_role', ['customer', 'contractor']);
 export const orderStatusEnum = pgEnum('order_status', [
-  'new', 'accepted', 'in_progress', 'pending_confirmation', 'pending_payment', 'completed', 'cancelled',
+  'new', 'accepted', 'en_route', 'in_progress', 'pending_confirmation', 'pending_payment', 'completed', 'cancelled',
 ]);
 
 // Users
