@@ -306,6 +306,7 @@ ordersRouter.patch('/:id', async (c) => {
     scheduledAt: z.string().datetime().optional().nullable(),
     asap: z.boolean().optional(),
     photoUrls: z.array(photoUrlSchema).max(5).optional(),
+    wasteType: z.enum(['household', 'construction', 'bulky']).optional(),
   });
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION', message: 'Invalid input' } }, 400);
@@ -321,6 +322,7 @@ ordersRouter.patch('/:id', async (c) => {
     ...(d.asap !== undefined && { asap: d.asap }),
     ...((d.asap === true) && { scheduledAt: null }),
     ...((d.asap === false && d.scheduledAt) && { scheduledAt: new Date(d.scheduledAt) }),
+    ...(d.wasteType !== undefined && { wasteType: d.wasteType }),
     updatedAt: new Date(),
   }).where(eq(orders.id, id)).returning();
 
