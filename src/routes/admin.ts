@@ -3,6 +3,7 @@ import { eq, count, sum, like, desc, sql, or, ilike, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, orders, orderHistory, supportMessages, blockedAddresses, referrals, userAchievements, refreshTokens, otpCodes, messages, subscriptions, accessPlans } from '../db/schema.js';
 import { notifyUser } from '../lib/notify.js';
+import { notifyAdmin } from '../lib/telegram.js';
 
 const adminRouter = new Hono();
 
@@ -78,6 +79,15 @@ adminRouter.post('/unfreeze/:id', async (c) => {
   if (!checkAdmin(c)) return forbidden(c);
   const id = c.req.param('id');
   await db.update(users).set({ frozen: false, freezeReason: null } as any).where(eq(users.id, id));
+  return c.json({ data: { ok: true } });
+});
+
+// POST /admin/verify/:id — mark contractor as verified and notify them
+adminRouter.post('/verify/:id', async (c) => {
+  if (!checkAdmin(c)) return forbidden(c);
+  const id = c.req.param('id');
+  await db.update(users).set({ isVerified: true } as any).where(eq(users.id, id));
+  await notifyUser(id, '✅ Аккаунт верифицирован', 'Ваш аккаунт проверен! Теперь вы можете принимать заказы.').catch(() => {});
   return c.json({ data: { ok: true } });
 });
 

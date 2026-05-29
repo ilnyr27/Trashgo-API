@@ -10,15 +10,19 @@ if (resend && FROM.includes('onboarding@resend.dev')) {
 
 export const isEmailEnabled = () => !!resend;
 
-async function send(to: string, subject: string, html: string, text?: string): Promise<void> {
-  if (!resend) { console.log(`[EMAIL DEV] To: ${to} | ${subject}`); return; }
+async function send(to: string, subject: string, html: string, text?: string): Promise<boolean> {
+  if (!resend) { console.log(`[EMAIL DEV] To: ${to} | ${subject}`); return true; }
   const payload = { from: FROM, to, subject, html, ...(text ? { text } : {}) };
   const { error } = await resend.emails.send(payload);
   if (error) {
     console.error('[EMAIL] Send failed, retrying once:', error.message);
     const retry = await resend.emails.send(payload);
-    if (retry.error) console.error('[EMAIL] Retry also failed:', retry.error.message);
+    if (retry.error) {
+      console.error('[EMAIL] Retry also failed:', retry.error.message);
+      return false;
+    }
   }
+  return true;
 }
 
 function base(content: string): string {
@@ -33,8 +37,8 @@ function card(text: string): string {
   return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1rem;font-size:0.9rem;color:#374151">${text}</div>`;
 }
 
-export async function sendEmailOtp(to: string, code: string): Promise<void> {
-  await send(
+export async function sendEmailOtp(to: string, code: string): Promise<boolean> {
+  return send(
     to,
     `${code} — ваш код TrashGo`,
     base(`

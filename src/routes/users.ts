@@ -87,6 +87,7 @@ usersRouter.get('/me', async (c) => {
       sbpBank: u.sbpBank ?? null,
       frozen: u.frozen ?? false,
       freezeReason: u.freezeReason ?? null,
+      isVerified: (u as any).isVerified ?? false,
       createdAt: u.createdAt.toISOString(),
       subscriptionStatus,
       subscriptionExpiresAt: subExpiresAt?.toISOString() ?? null,
@@ -199,6 +200,7 @@ usersRouter.get('/contractors', async (c) => {
       transportMode: users.transportMode,
       level: users.level,
       xp: users.xp,
+      isVerified: users.isVerified,
       completedOrders: count(orders.id),
       avgRating: avg(orders.ratingByCustomer),
       ratingCount: count(orders.ratingByCustomer),
@@ -213,7 +215,7 @@ usersRouter.get('/contractors', async (c) => {
         ? and(eq(users.role, 'contractor'), eq(users.district, district), eq(users.isAvailable, true))
         : and(eq(users.role, 'contractor'), eq(users.isAvailable, true))
     )
-    .groupBy(users.id, users.name, users.district, users.transportMode, users.level, users.xp)
+    .groupBy(users.id, users.name, users.district, users.transportMode, users.level, users.xp, users.isVerified)
     .orderBy(desc(count(orders.id)))
     .limit(50);
 
@@ -225,6 +227,7 @@ usersRouter.get('/contractors', async (c) => {
       transportMode: r.transportMode,
       level: Number(r.level),
       xp: Number(r.xp),
+      isVerified: r.isVerified ?? false,
       completedOrders: Number(r.completedOrders),
       avgRating: r.avgRating ? Number(Number(r.avgRating).toFixed(1)) : null,
       ratingCount: Number(r.ratingCount),

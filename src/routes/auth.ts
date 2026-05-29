@@ -9,7 +9,7 @@ import { users, otpCodes, refreshTokens, referrals, orders } from '../db/schema.
 import { checkReferralAchievements } from '../lib/achievements.js';
 import { emitToUser } from '../ws.js';
 import { sendOtp, hasSms } from '../lib/sms.js';
-import { hasTelegram, sendTelegramOtp, getBotUsername } from '../lib/telegram.js';
+import { hasTelegram, sendTelegramOtp, getBotUsername, notifyAdmin } from '../lib/telegram.js';
 import { telegramTokens, cleanupTelegramTokens } from '../lib/telegramTokens.js';
 import { verifyFirebaseIdToken, isFirebaseAdminReady } from '../lib/firebase-admin.js';
 import { sendEmailOtp, isEmailEnabled } from '../lib/email.js';
@@ -140,8 +140,13 @@ auth.post('/login', async (c) => {
   let telegramBotLink: string | undefined;
 
   if (useEmailOtp) {
-    await sendEmailOtp(email, code);
+    const emailOk = await sendEmailOtp(email, code);
     channel = 'email';
+    if (!emailOk && hasTelegram() && existingUser?.telegramChatId) {
+      // Email failed — fall back to Telegram
+      await sendTelegramOtp(existingUser.telegramChatId, code).catch(() => {});
+      channel = 'telegram';
+    }
   } else if (hasTelegram() && existingUser?.telegramChatId) {
     await sendTelegramOtp(existingUser.telegramChatId, code);
     channel = 'telegram';
@@ -287,6 +292,7 @@ auth.post('/verify', async (c) => {
         innVerified: (userRow as any).innVerified ?? false,
         frozen: (userRow as any).frozen ?? false,
         freezeReason: (userRow as any).freezeReason ?? null,
+        isVerified: (userRow as any).isVerified ?? false,
         createdAt: userRow.createdAt.toISOString(),
       },
       token: tokens.token,
@@ -373,6 +379,12 @@ auth.post('/register', async (c) => {
   }
 
   const user = newUser[0];
+
+  // Notify admin about new contractor registration for manual verification
+  if (role === 'contractor') {
+    notifyAdmin(`🆕 *Новый исполнитель зарегистрировался*\n\nИмя: ${censor(name)}\nРайон: ${district}\n\nВерифицируйте через /admin → поиск по имени → кнопка «Верифицировать»`).catch(() => {});
+  }
+
   const tokens = generateTokens(user.id, user.role);
 
   // Store refresh token

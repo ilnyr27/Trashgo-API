@@ -177,7 +177,7 @@ ordersRouter.get('/:id', async (c) => {
   // Round 2: contractor data + customer data in parallel
   const [contractorResult, customerResult] = await Promise.all([
     row.order.contractorId ? Promise.all([
-      db.select({ name: users.name, phone: users.phone, sbpBank: users.sbpBank }).from(users).where(eq(users.id, row.order.contractorId!)).limit(1),
+      db.select({ name: users.name, phone: users.phone, sbpBank: users.sbpBank, isVerified: users.isVerified }).from(users).where(eq(users.id, row.order.contractorId!)).limit(1),
       db.select({ avg: avg(orders.ratingByCustomer), cnt: count(orders.ratingByCustomer) })
         .from(orders).where(and(eq(orders.contractorId, row.order.contractorId!), isNotNull(orders.ratingByCustomer))),
       db.select({ cnt: sql<number>`count(*)::int` })
@@ -197,6 +197,7 @@ ordersRouter.get('/:id', async (c) => {
   const contractorPhone = contractor?.phone ?? '';
   const contractorName = contractor?.name ?? '';
   const contractorSbpBank = contractor?.sbpBank ?? null;
+  const contractorIsVerified = contractor?.isVerified ?? false;
   const contractorAvgRating = cRating?.avg ? parseFloat(cRating.avg) : null;
   const contractorRatingCount = Number(cRating?.cnt ?? 0);
   const contractorCompletedOrders = Number(ccRow?.cnt ?? 0);
@@ -214,6 +215,7 @@ ordersRouter.get('/:id', async (c) => {
     contractorPhone,
     contractorName,
     contractorSbpBank,
+    contractorIsVerified,
     contractorAvgRating,
     contractorRatingCount,
     contractorCompletedOrders,

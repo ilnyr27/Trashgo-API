@@ -34,6 +34,7 @@ export const users = pgTable('users', {
   frozen: boolean('frozen').notNull().default(false),
   freezeReason: varchar('freeze_reason', { length: 500 }),
   isAvailable: boolean('is_available').notNull().default(true),
+  isVerified: boolean('is_verified').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 

@@ -1,7 +1,19 @@
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API = () => `https://api.telegram.org/bot${TOKEN}`;
+const ADMIN_CHAT_ID = process.env.ADMIN_TELEGRAM_CHAT_ID;
 
 export const hasTelegram = () => !!TOKEN;
+
+export async function notifyAdmin(message: string): Promise<void> {
+  if (!TOKEN || !ADMIN_CHAT_ID) return;
+  try {
+    await fetch(`${API()}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: ADMIN_CHAT_ID, text: message, parse_mode: 'Markdown' }),
+    });
+  } catch {}
+}
 
 export async function sendTelegramNotification(chatId: string, title: string, body: string): Promise<boolean> {
   if (!TOKEN) return false;
