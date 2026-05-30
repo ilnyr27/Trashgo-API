@@ -10,7 +10,7 @@ const adminRouter = new Hono();
 
 function checkAdmin(c: any): boolean {
   const secret = process.env.ADMIN_SECRET;
-  if (!secret) return true; // no secret configured → open (dev)
+  if (!secret) return false;
   const provided = c.req.header('Authorization')?.replace('Bearer ', '');
   return provided === secret;
 }

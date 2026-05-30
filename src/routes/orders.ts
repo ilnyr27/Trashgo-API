@@ -61,7 +61,7 @@ const updateStatusSchema = z.object({
 });
 
 const completeOrderSchema = z.object({
-  completionPhotoUrls: z.array(photoUrlSchema).max(5).default([]),
+  completionPhotoUrls: z.array(photoUrlSchema).min(1, 'At least one completion photo required').max(5),
 });
 
 // GET /orders — list my orders (offset pagination)
@@ -448,6 +448,9 @@ ordersRouter.patch('/:id/status', async (c) => {
     if (user.userId === order.customerId) {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Cannot accept your own order' } }, 403);
     }
+    if (!await hasActiveSubscription(user.userId)) {
+      return c.json({ error: { code: 'SUBSCRIPTION_REQUIRED', message: 'Требуется активный абонемент' } }, 403);
+    }
   } else if (status === 'en_route') {
     if (user.userId !== order.contractorId) {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Only the assigned contractor can set en_route' } }, 403);
@@ -621,8 +624,12 @@ ordersRouter.post('/:id/complete', async (c) => {
       completionPhotoUrls: JSON.stringify(parsed.data.completionPhotoUrls),
       updatedAt: new Date(),
     })
-    .where(eq(orders.id, id))
+    .where(and(eq(orders.id, id), eq(orders.status, 'in_progress')))
     .returning();
+
+  if (updated.length === 0) {
+    return c.json({ error: { code: 'CONFLICT', message: 'Order already submitted or status changed' } }, 409);
+  }
 
   await db.insert(orderHistory).values({
     orderId: id,
@@ -974,6 +981,7 @@ ordersRouter.post('/:id/block-customer', async (c) => {
   const order = current[0];
 
   if (order.contractorId !== user.userId) return c.json({ error: { code: 'FORBIDDEN', message: 'Not your order' } }, 403);
+  if (order.status !== 'pending_payment') return c.json({ error: { code: 'INVALID_STATUS', message: 'Block only available when awaiting payment' } }, 400);
 
   const alreadyBlocked = await db.select({ id: blockedAddresses.id })
     .from(blockedAddresses)
@@ -1019,9 +1027,14 @@ ordersRouter.post('/:id/unassign-contractor', async (c) => {
 
   const prevContractorId = order.contractorId;
 
-  await db.update(orders)
+  const unassigned = await db.update(orders)
     .set({ status: 'new', contractorId: null, updatedAt: new Date() })
-    .where(eq(orders.id, id));
+    .where(and(eq(orders.id, id), eq(orders.status, 'accepted')))
+    .returning({ id: orders.id });
+
+  if (unassigned.length === 0) {
+    return c.json({ error: { code: 'CONFLICT', message: 'Order status changed' } }, 409);
+  }
 
   await db.insert(orderHistory).values({
     orderId: id,

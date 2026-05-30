@@ -1,4 +1,4 @@
-import { eq, and, gt, desc } from 'drizzle-orm';
+import { eq, and, gt, desc, isNotNull } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, accessPlans, referrals } from '../db/schema.js';
 
@@ -45,31 +45,28 @@ export async function hasActiveSubscription(userId: string): Promise<boolean> {
 }
 
 export async function countActiveReferees(referrerId: string): Promise<number> {
-  const refs = await db.select({ refereeId: referrals.refereeId })
-    .from(referrals).where(eq(referrals.referrerId, referrerId));
-
-  if (refs.length === 0) return 0;
-
   const now = new Date();
-  let active = 0;
 
-  for (const { refereeId } of refs) {
-    const [referee] = await db.select({ createdAt: users.createdAt })
-      .from(users).where(eq(users.id, refereeId)).limit(1);
-    if (!referee) continue;
-
-    if (now < trialEndsAt(referee.createdAt)) { active++; continue; }
-
-    const [plan] = await db.select({ id: accessPlans.id })
-      .from(accessPlans)
-      .where(and(
-        eq(accessPlans.userId, refereeId),
+  const rows = await db
+    .select({
+      userCreatedAt: users.createdAt,
+      planExpiresAt: accessPlans.expiresAt,
+    })
+    .from(referrals)
+    .innerJoin(users, eq(users.id, referrals.refereeId))
+    .leftJoin(
+      accessPlans,
+      and(
+        eq(accessPlans.userId, referrals.refereeId),
         eq(accessPlans.status, 'active'),
         gt(accessPlans.expiresAt!, now),
-      ))
-      .limit(1);
-    if (plan) active++;
-  }
+      ),
+    )
+    .where(eq(referrals.referrerId, referrerId));
 
+  let active = 0;
+  for (const row of rows) {
+    if (now < trialEndsAt(row.userCreatedAt) || row.planExpiresAt !== null) active++;
+  }
   return Math.min(active, MAX_REFERRAL_BONUS);
 }
