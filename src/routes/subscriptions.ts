@@ -20,6 +20,7 @@ const SubSchema = z.object({
   price: z.number().int().min(1),
   description: z.string().max(500).default(''),
   contractorId: z.string().uuid().optional().nullable(),
+  interval: z.enum(['weekly', 'biweekly', 'monthly']).default('weekly'),
 });
 
 function formatSub(r: typeof subscriptions.$inferSelect, contractorName?: string | null) {
@@ -82,6 +83,7 @@ router.patch('/:id', async (c) => {
   if (rest.price !== undefined) setData.price = rest.price;
   if (rest.description !== undefined) setData.description = rest.description;
   if (rest.active !== undefined) setData.active = rest.active;
+  if (rest.interval !== undefined) setData.interval = rest.interval;
   if (days !== undefined) setData.days = JSON.stringify(days);
   if (contractorId !== undefined) setData.contractorId = contractorId ?? undefined;
   const [sub] = await db.update(subscriptions)

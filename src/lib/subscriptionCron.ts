@@ -40,6 +40,21 @@ export async function runSubscriptionCron() {
 
     if (!days.includes(isoDay)) continue;
 
+    // Check interval: biweekly = every other week, monthly = first occurrence of weekday in month
+    const subInterval = (sub as any).interval ?? 'weekly';
+    if (subInterval === 'biweekly') {
+      // Count how many full weeks have passed since subscription was created
+      const createdMoscow = new Date(sub.createdAt.getTime());
+      const todayMs = new Date(`${dateStr}T12:00:00+03:00`).getTime();
+      const weeksSinceCreation = Math.floor((todayMs - createdMoscow.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      if (weeksSinceCreation % 2 !== 0) continue;  // skip odd weeks
+    } else if (subInterval === 'monthly') {
+      // Only run on the first occurrence of this weekday in the current month
+      const todayDate = new Date(`${dateStr}T12:00:00+03:00`);
+      const dayOfMonth = todayDate.getDate();
+      if (dayOfMonth > 7) continue;  // first occurrence is always within days 1-7
+    }
+
     // Dedup: skip if we already created an order from this subscription today
     const todayMidnightMoscow = new Date(`${dateStr}T00:00:00+03:00`);
     const existing = await db

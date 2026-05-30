@@ -63,6 +63,7 @@ export const subscriptions = pgTable('subscriptions', {
   price: integer('price').notNull(),
   description: text('description').notNull().default(''),
   active: boolean('active').notNull().default(true),
+  interval: varchar('interval', { length: 20 }).notNull().default('weekly'),  // 'weekly' | 'biweekly' | 'monthly'
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('idx_subscriptions_customer').on(table.customerId),

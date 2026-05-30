@@ -350,6 +350,7 @@ async function runMigrations() {
     ['col cancel_count', `ALTER TABLE users ADD COLUMN IF NOT EXISTS cancel_count INTEGER NOT NULL DEFAULT 0`],
     ['col review_by_customer', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_by_customer TEXT`],
     ['col deleted_at', `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`],
+    ['col subscriptions_interval', `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS interval VARCHAR(20) NOT NULL DEFAULT 'weekly'`],
   ];
 
   for (const [name, ddl] of steps) {
