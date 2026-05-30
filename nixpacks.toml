@@ -1,0 +1,5 @@
+[phases.build]
+cmds = ["npm ci --omit=dev || npm install --omit=dev"]
+
+[start]
+cmd = "node --import tsx src/db/migrate.ts && node --import tsx src/index.ts"
