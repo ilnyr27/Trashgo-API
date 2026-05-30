@@ -351,6 +351,12 @@ async function runMigrations() {
     ['col review_by_customer', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_by_customer TEXT`],
     ['col deleted_at', `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`],
     ['col subscriptions_interval', `ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS interval VARCHAR(20) NOT NULL DEFAULT 'weekly'`],
+    ['orders.eta_minutes', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS eta_minutes INTEGER`],
+    ['orders.en_route_at', `ALTER TABLE orders ADD COLUMN IF NOT EXISTS en_route_at TIMESTAMP`],
+    ['promo_codes table', `CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code VARCHAR(50) NOT NULL UNIQUE, discount_amount INTEGER NOT NULL DEFAULT 0, max_uses INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT NOW())`],
+    ['idx_promo_codes_code', `CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)`],
+    ['access_plans.promo_code', `ALTER TABLE access_plans ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50)`],
+    ['access_plans.discount_applied', `ALTER TABLE access_plans ADD COLUMN IF NOT EXISTS discount_applied INTEGER NOT NULL DEFAULT 0`],
   ];
 
   for (const [name, ddl] of steps) {

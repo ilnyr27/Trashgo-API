@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { eq, count, sum, like, desc, sql, or, ilike, and, isNotNull } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { users, orders, orderHistory, supportMessages, blockedAddresses, referrals, userAchievements, refreshTokens, otpCodes, messages, subscriptions, accessPlans } from '../db/schema.js';
+import { users, orders, orderHistory, supportMessages, blockedAddresses, referrals, userAchievements, refreshTokens, otpCodes, messages, subscriptions, accessPlans, promoCodes } from '../db/schema.js';
 import { notifyUser } from '../lib/notify.js';
 import { notifyAdmin } from '../lib/telegram.js';
 import { sendPushNotification } from '../lib/firebase-admin.js';
@@ -467,6 +467,42 @@ adminRouter.post('/broadcast-update', async (c) => {
   }
 
   return c.json({ data: { sent, failed, total: rows.length } });
+});
+
+// GET /admin/promo-codes
+adminRouter.get('/promo-codes', async (c) => {
+  if (!checkAdmin(c)) return forbidden(c);
+  const rows = await db.select().from(promoCodes).orderBy(desc(promoCodes.createdAt));
+  return c.json({ data: rows.map(p => ({
+    id: p.id,
+    code: p.code,
+    discountAmount: p.discountAmount,
+    maxUses: p.maxUses,
+    usedCount: p.usedCount,
+    expiresAt: p.expiresAt?.toISOString() ?? null,
+    createdAt: p.createdAt.toISOString(),
+  })) });
+});
+
+// POST /admin/promo-codes
+adminRouter.post('/promo-codes', async (c) => {
+  if (!checkAdmin(c)) return forbidden(c);
+  const body = await c.req.json().catch(() => ({}));
+  const code = typeof body.code === 'string' ? body.code.trim().toUpperCase().slice(0, 50) : null;
+  const discountAmount = typeof body.discountAmount === 'number' ? body.discountAmount : 0;
+  const maxUses = typeof body.maxUses === 'number' ? body.maxUses : 0;
+  const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+  if (!code) return c.json({ error: { code: 'VALIDATION', message: 'code required' } }, 400);
+  const [promo] = await db.insert(promoCodes).values({ code, discountAmount, maxUses, ...(expiresAt ? { expiresAt } : {}) }).returning();
+  return c.json({ data: promo }, 201);
+});
+
+// DELETE /admin/promo-codes/:id
+adminRouter.delete('/promo-codes/:id', async (c) => {
+  if (!checkAdmin(c)) return forbidden(c);
+  const id = c.req.param('id');
+  await db.delete(promoCodes).where(eq(promoCodes.id, id));
+  return c.json({ data: { ok: true } });
 });
 
 export default adminRouter;

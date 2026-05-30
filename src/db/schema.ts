@@ -89,6 +89,8 @@ export const orders = pgTable('orders', {
   ratingByCustomer: integer('rating_by_customer'),
   reviewByCustomer: text('review_by_customer'),
   ratingByContractor: integer('rating_by_contractor'),
+  etaMinutes: integer('eta_minutes'),
+  enRouteAt: timestamp('en_route_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => [
@@ -195,10 +197,24 @@ export const accessPlans = pgTable('access_plans', {
   status: varchar('status', { length: 20 }).notNull().default('pending'), // pending | active | expired
   priceAtPurchase: integer('price_at_purchase').notNull().default(50),
   paymentRef: varchar('payment_ref', { length: 200 }),
+  promoCode: varchar('promo_code', { length: 50 }),
+  discountApplied: integer('discount_applied').notNull().default(0),
   startsAt: timestamp('starts_at'),
   expiresAt: timestamp('expires_at'),
   confirmedAt: timestamp('confirmed_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('idx_access_plans_user').on(table.userId),
+]);
+
+export const promoCodes = pgTable('promo_codes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  code: varchar('code', { length: 50 }).notNull().unique(),
+  discountAmount: integer('discount_amount').notNull().default(0),
+  maxUses: integer('max_uses').notNull().default(0),
+  usedCount: integer('used_count').notNull().default(0),
+  expiresAt: timestamp('expires_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('idx_promo_codes_code').on(table.code),
 ]);

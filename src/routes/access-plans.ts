@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { accessPlans, users } from '../db/schema.js';
+import { accessPlans, users, promoCodes } from '../db/schema.js';
 import { authMiddleware, type JwtPayload } from '../middleware/auth.js';
 import { getSubStatus, countActiveReferees, PLAN_PRICE, REFERRAL_DISCOUNT } from '../lib/subscriptionStatus.js';
 import { notifyAdmin } from '../lib/telegram.js';
@@ -61,6 +61,7 @@ router.post('/request', async (c) => {
   const { userId } = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const paymentRef = typeof body.paymentRef === 'string' ? body.paymentRef.trim().slice(0, 200) : null;
+  const promoCodeInput = typeof body.promoCode === 'string' ? body.promoCode.trim().toUpperCase().slice(0, 50) : null;
 
   const existing = await db.select({ id: accessPlans.id })
     .from(accessPlans)
@@ -72,13 +73,36 @@ router.post('/request', async (c) => {
   }
 
   const activeReferrals = await countActiveReferees(userId);
-  const priceAtPurchase = Math.max(0, PLAN_PRICE - activeReferrals * REFERRAL_DISCOUNT);
+  let priceAtPurchase = Math.max(0, PLAN_PRICE - activeReferrals * REFERRAL_DISCOUNT);
+  let promoDiscount = 0;
+  let validPromoCode: string | null = null;
+
+  if (promoCodeInput) {
+    const [promo] = await db.select().from(promoCodes)
+      .where(eq(promoCodes.code, promoCodeInput))
+      .limit(1);
+    if (!promo) {
+      return c.json({ error: { code: 'INVALID_PROMO', message: 'Промокод не найден' } }, 400);
+    }
+    if (promo.expiresAt && promo.expiresAt < new Date()) {
+      return c.json({ error: { code: 'PROMO_EXPIRED', message: 'Промокод истёк' } }, 400);
+    }
+    if (promo.maxUses > 0 && promo.usedCount >= promo.maxUses) {
+      return c.json({ error: { code: 'PROMO_EXHAUSTED', message: 'Промокод исчерпан' } }, 400);
+    }
+    promoDiscount = promo.discountAmount;
+    validPromoCode = promo.code;
+    priceAtPurchase = Math.max(0, priceAtPurchase - promoDiscount);
+    await db.execute(sql`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ${promo.id}`);
+  }
 
   const [plan] = await db.insert(accessPlans).values({
     userId,
     status: 'pending',
     priceAtPurchase,
+    discountApplied: (activeReferrals * REFERRAL_DISCOUNT) + promoDiscount,
     ...(paymentRef ? { paymentRef } : {}),
+    ...(validPromoCode ? { promoCode: validPromoCode } : {}),
   }).returning();
 
   // Notify admin
@@ -87,6 +111,7 @@ router.post('/request', async (c) => {
     `💳 *Новый запрос на абонемент*\n\n` +
     `Пользователь: ${userRow?.name ?? '—'}\n` +
     `Сумма: ${priceAtPurchase}₽\n` +
+    (validPromoCode ? `Промокод: ${validPromoCode} (−${promoDiscount}₽)\n` : '') +
     (paymentRef ? `Реквизит: ${paymentRef}\n` : '') +
     `\nПодтвердите в /admin → Абонементы`
   ).catch(() => {});
@@ -94,9 +119,21 @@ router.post('/request', async (c) => {
   return c.json({ data: {
     id: plan.id,
     priceAtPurchase: plan.priceAtPurchase,
+    discountApplied: plan.discountApplied,
+    promoCode: plan.promoCode ?? null,
     status: 'pending',
     createdAt: plan.createdAt.toISOString(),
   } }, 201);
+});
+
+// GET /access-plans/promo-check/:code — validate a promo code
+router.get('/promo-check/:code', async (c) => {
+  const code = c.req.param('code').toUpperCase().trim();
+  const [promo] = await db.select().from(promoCodes).where(eq(promoCodes.code, code)).limit(1);
+  if (!promo) return c.json({ error: { code: 'INVALID_PROMO', message: 'Промокод не найден' } }, 404);
+  if (promo.expiresAt && promo.expiresAt < new Date()) return c.json({ error: { code: 'PROMO_EXPIRED', message: 'Промокод истёк' } }, 400);
+  if (promo.maxUses > 0 && promo.usedCount >= promo.maxUses) return c.json({ error: { code: 'PROMO_EXHAUSTED', message: 'Промокод исчерпан' } }, 400);
+  return c.json({ data: { code: promo.code, discountAmount: promo.discountAmount } });
 });
 
 export default router;

@@ -344,6 +344,13 @@ ordersRouter.post('/', async (c) => {
     return c.json({ error: { code: 'RATE_LIMITED', message: 'Слишком много заказов. Подождите немного.' } }, 429);
   }
 
+  // Max 5 simultaneous active orders
+  const [activeCount] = await db.select({ cnt: count() }).from(orders)
+    .where(and(eq(orders.customerId, user.userId), inArray(orders.status, ['new', 'accepted', 'en_route', 'in_progress', 'pending_confirmation', 'pending_payment'])));
+  if ((activeCount?.cnt ?? 0) >= 5) {
+    return c.json({ error: { code: 'TOO_MANY_ACTIVE', message: 'Нельзя создать больше 5 активных заказов одновременно' } }, 400);
+  }
+
   const body = await c.req.json();
   const parsed = createOrderSchema.safeParse(body);
 
@@ -418,6 +425,7 @@ ordersRouter.patch('/:id/status', async (c) => {
   }
 
   const { status } = parsed.data;
+  const etaMinutes: number | undefined = typeof body.etaMinutes === 'number' ? body.etaMinutes : undefined;
 
   const current = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
   if (current.length === 0) {
@@ -503,6 +511,10 @@ ordersRouter.patch('/:id/status', async (c) => {
   if (effectiveStatus === 'new' && status === 'cancelled') {
     updates.contractorId = null;
   }
+  if (status === 'en_route') {
+    updates.enRouteAt = new Date();
+    if (etaMinutes !== undefined) updates.etaMinutes = etaMinutes;
+  }
 
   const updated = await db.update(orders)
     .set(updates)
@@ -530,7 +542,7 @@ ordersRouter.patch('/:id/status', async (c) => {
   const updatedOrder = updated[0];
   const statusLabels: Record<string, string> = {
     accepted: 'Исполнитель принял заказ',
-    en_route: 'Исполнитель выехал к вам',
+    en_route: etaMinutes ? `Исполнитель выехал к вам (~${etaMinutes} мин)` : 'Исполнитель выехал к вам',
     in_progress: 'Исполнитель выполняет заказ',
     pending_confirmation: 'Ожидает вашего подтверждения',
     completed: 'Заказ выполнен',
@@ -1075,6 +1087,8 @@ function formatOrder(o: typeof orders.$inferSelect) {
     ratingByCustomer: o.ratingByCustomer ?? null,
     reviewByCustomer: (o as any).reviewByCustomer ?? null,
     ratingByContractor: o.ratingByContractor ?? null,
+    etaMinutes: o.etaMinutes ?? null,
+    enRouteAt: o.enRouteAt ? o.enRouteAt.toISOString() : null,
   };
 }
 
