@@ -357,6 +357,8 @@ async function runMigrations() {
     ['idx_promo_codes_code', `CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)`],
     ['access_plans.promo_code', `ALTER TABLE access_plans ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50)`],
     ['access_plans.discount_applied', `ALTER TABLE access_plans ADD COLUMN IF NOT EXISTS discount_applied INTEGER NOT NULL DEFAULT 0`],
+    ['messages.photo_url', `ALTER TABLE messages ADD COLUMN IF NOT EXISTS photo_url TEXT`],
+    ['messages.text nullable default', `ALTER TABLE messages ALTER COLUMN text SET DEFAULT ''`],
   ];
 
   for (const [name, ddl] of steps) {

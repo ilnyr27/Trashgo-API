@@ -114,7 +114,8 @@ export const messages = pgTable('messages', {
   orderId: uuid('order_id').notNull().references(() => orders.id),
   senderId: uuid('sender_id').notNull().references(() => users.id),
   senderName: varchar('sender_name', { length: 100 }).notNull().default(''),
-  text: text('text').notNull(),
+  text: text('text').notNull().default(''),
+  photoUrl: text('photo_url'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('idx_messages_order').on(table.orderId, table.createdAt),

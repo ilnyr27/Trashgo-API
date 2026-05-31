@@ -405,6 +405,37 @@ adminRouter.post('/access-plans/:id/reject', async (c) => {
   return c.json({ data: { id, deleted: true } });
 });
 
+// POST /admin/grant-subscription — grant subscription by phone (search + activate in one step)
+adminRouter.post('/grant-subscription', async (c) => {
+  if (!checkAdmin(c)) return forbidden(c);
+  const body = await c.req.json().catch(() => ({}));
+  const phone = typeof body.phone === 'string' ? body.phone.trim() : null;
+  const months = typeof body.months === 'number' && body.months > 0 ? Math.min(body.months, 12) : 1;
+  if (!phone) return c.json({ error: { code: 'VALIDATION', message: 'phone required' } }, 400);
+
+  const [user] = await db.select({ id: users.id, name: users.name, phone: users.phone })
+    .from(users).where(eq(users.phone, phone)).limit(1);
+  if (!user) return c.json({ error: { code: 'NOT_FOUND', message: 'Пользователь с таким номером не найден' } }, 404);
+
+  const now = new Date();
+  const [existing] = await db.select({ id: accessPlans.id, expiresAt: accessPlans.expiresAt })
+    .from(accessPlans).where(and(eq(accessPlans.userId, user.id), eq(accessPlans.status, 'active')))
+    .orderBy(desc(accessPlans.expiresAt)).limit(1);
+
+  const baseDate = (existing?.expiresAt && existing.expiresAt > now) ? existing.expiresAt : now;
+  const newExpiry = new Date(baseDate.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+  if (existing) {
+    await db.update(accessPlans).set({ expiresAt: newExpiry }).where(eq(accessPlans.id, existing.id));
+  } else {
+    await db.insert(accessPlans).values({ userId: user.id, status: 'active', priceAtPurchase: 0, paymentRef: 'admin-grant', startsAt: now, expiresAt: newExpiry, confirmedAt: now } as any);
+  }
+
+  const expiryLabel = newExpiry.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long', year: 'numeric' });
+  notifyUser(user.id, '✅ TrashGo', `Администратор активировал абонемент до ${expiryLabel}`);
+  return c.json({ data: { userId: user.id, name: user.name, phone: user.phone, expiresAt: newExpiry.toISOString() } });
+});
+
 // POST /admin/users/:id/extend-subscription — grant or extend +30 days access plan
 adminRouter.post('/users/:id/extend-subscription', async (c) => {
   if (!checkAdmin(c)) return forbidden(c);

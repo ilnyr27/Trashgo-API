@@ -247,6 +247,7 @@ ordersRouter.get('/:id/messages', async (c) => {
     senderId: m.senderId,
     senderName: m.senderName,
     text: m.text,
+    photoUrl: m.photoUrl ?? null,
     createdAt: m.createdAt.toISOString(),
   })) });
 });
@@ -257,7 +258,8 @@ ordersRouter.post('/:id/messages', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
   const text = censor((body?.text ?? '').toString().trim().slice(0, 1000));
-  if (!text) return c.json({ error: { code: 'VALIDATION', message: 'Text required' } }, 400);
+  const photoUrl = typeof body.photoUrl === 'string' && body.photoUrl.startsWith('https://') ? body.photoUrl : null;
+  if (!text && !photoUrl) return c.json({ error: { code: 'VALIDATION', message: 'Text or photo required' } }, 400);
 
   const order = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
   if (!order.length) return c.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, 404);
@@ -269,19 +271,19 @@ ordersRouter.post('/:id/messages', async (c) => {
   const sender = await db.select({ name: users.name }).from(users).where(eq(users.id, user.userId)).limit(1);
   const senderName = sender[0]?.name ?? '';
 
-  const msg = await db.insert(messages).values({ orderId: id, senderId: user.userId, senderName, text }).returning();
+  const msg = await db.insert(messages).values({ orderId: id, senderId: user.userId, senderName, text, photoUrl }).returning();
 
   // Notify the other party via WebSocket + push + Telegram
   const recipientId = o.customerId === user.userId ? o.contractorId : o.customerId;
   if (recipientId) {
-    const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+    const preview = photoUrl ? '📷 Фото' : (text.length > 60 ? text.slice(0, 60) + '…' : text);
     emitToUser(recipientId, { type: 'chat', orderId: id, title: `Новое сообщение от ${senderName}`, message: preview });
     notifyUser(recipientId, `💬 ${senderName}`, preview, id);
   }
 
   return c.json({ data: {
     id: msg[0].id, senderId: msg[0].senderId, senderName: msg[0].senderName,
-    text: msg[0].text, createdAt: msg[0].createdAt.toISOString(),
+    text: msg[0].text, photoUrl: msg[0].photoUrl ?? null, createdAt: msg[0].createdAt.toISOString(),
   } }, 201);
 });
 
